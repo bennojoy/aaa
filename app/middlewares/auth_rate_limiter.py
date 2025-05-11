@@ -15,7 +15,7 @@ class AuthRateLimiter(BaseHTTPMiddleware):
         self.blacklist = {}  # IP -> unblock timestamp
         self.requests_per_minute = settings.RATE_LIMIT_PER_MINUTE
         self.requests_per_ten_minutes = settings.RATE_LIMIT_PER_HOUR // 6
-        self.blacklist_duration = 3600  # 1 hour in seconds
+        self.blacklist_duration = 60  # 1 minute in seconds
 
     async def dispatch(self, request: Request, call_next):
         # Only apply to auth endpoints

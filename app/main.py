@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.routes import auth, rooms
+from app.api.routes import auth, rooms, participants
 # from app.api.routes import users
 # from app.api.routes import messages
 from app.middlewares.trace_id import TraceIDMiddleware
@@ -45,9 +45,9 @@ app.add_middleware(TraceIDMiddleware)
 # Import and include routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(rooms.router, prefix=settings.API_V1_STR)
+app.include_router(participants.router, prefix=settings.API_V1_STR)
 # app.include_router(users.router, prefix=settings.API_V1_STR)
 # app.include_router(messages.router, prefix=settings.API_V1_STR)
-# app.include_router(participants.router, prefix=settings.API_V1_STR)
 
 @app.on_event("startup")
 async def startup_event():

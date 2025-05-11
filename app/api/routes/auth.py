@@ -26,17 +26,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 @router.post("/signup", response_model=UserResponse)
 async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     """
-    Register a new user.
+    Register a new user or return existing user if phone number already registered.
     
     Args:
         user_in (UserCreate): User registration data.
         db (AsyncSession): Database session.
     
     Returns:
-        UserResponse: Created user data with trace_id.
-    
-    Raises:
-        HTTPException: If user already exists.
+        UserResponse: Created or existing user data with trace_id.
     """
     trace_id = get_trace_id()
     logger.info(
@@ -61,18 +58,6 @@ async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
         response = UserResponse.model_validate(user, from_attributes=True)
         response.trace_id = trace_id
         return response.model_dump()
-    except UserAlreadyExistsServiceError as e:
-        logger.error(
-            "User registration failed: user exists",
-            extra={
-                "event": "signup_failed",
-                "reason": "user_exists",
-                "phone": user_in.phone_number,
-                "error": str(e),
-                "trace_id": trace_id
-            }
-        )
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(
             "Error registering user",

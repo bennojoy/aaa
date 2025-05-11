@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     MAX_REQUEST_SIZE: int = 1024 * 1024  # 1MB
     REQUEST_TIMEOUT: int = 30  # seconds
 
+    # Room Constraints
+    MAX_USERS_PER_ROOM: int = 5  # Maximum number of users allowed in a room
+    MAX_ROOMS_PER_USER: int = 10   # Maximum number of rooms a user can be in
+
     # Database settings
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./chat_platform.db")
     DB_ECHO: bool = True

@@ -1,25 +1,37 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum
-from sqlalchemy.sql import func
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
+from app.db.base import Base
+import uuid
+from datetime import datetime
 import enum
-from app.db.session import Base
 
-class ParticipantType(enum.Enum):
-    USER = "user"
-    AI_ASSISTANT = "ai_assistant"
+class ParticipantRole(str, enum.Enum):
+    OWNER = "owner"
+    ADMIN = "admin"
+    MEMBER = "member"
+
+class ParticipantStatus(str, enum.Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    BANNED = "banned"
 
 class Participant(Base):
     __tablename__ = "participants"
 
-    id = Column(Integer, primary_key=True, index=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Nullable for AI assistants
-    participant_type = Column(Enum(ParticipantType), nullable=False)
-    alias = Column(String, nullable=False)  # For AI assistants, this is their name
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    room_id = Column(UUID(as_uuid=True), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role = Column(Enum(ParticipantRole), nullable=False, default=ParticipantRole.MEMBER)
+    status = Column(Enum(ParticipantStatus), nullable=False, default=ParticipantStatus.ACTIVE)
+    joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_activity = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow)
 
     # Relationships
     room = relationship("Room", back_populates="participants")
-    user = relationship("User")
-    # messages = relationship("Message", back_populates="sender", cascade="all, delete-orphan") 
+    user = relationship("User", back_populates="participations")
+
+    def __repr__(self):
+        return f"<Participant(id={self.id}, room_id={self.room_id}, user_id={self.user_id}, role={self.role})>" 

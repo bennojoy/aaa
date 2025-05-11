@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from app.db.session import Base
+from datetime import datetime
 
 class Room(Base):
     __tablename__ = "rooms"
@@ -24,5 +25,8 @@ class Room(Base):
 
     # Relationships
     creator = relationship("User", foreign_keys=[created_by])
-    participants = relationship("Participant", back_populates="room")
+    participants = relationship("Participant", back_populates="room", cascade="all, delete-orphan")
     # messages = relationship("Message", back_populates="room", cascade="all, delete-orphan", lazy="dynamic") 
+
+    def __repr__(self):
+        return f"<Room(id={self.id}, name={self.name}, created_by={self.created_by})>" 

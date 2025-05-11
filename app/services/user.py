@@ -33,80 +33,55 @@ class AliasAlreadyExistsServiceError(UserServiceError):
     """Raised when attempting to use an alias that already exists"""
     pass
 
-async def create_user_service(db: AsyncSession, user: UserCreate) -> User:
-    """
-    Create a new user.
-    
-    Args:
-        db (AsyncSession): Database session.
-        user (UserCreate): User data.
-    
-    Returns:
-        User: Created user.
-    
-    Raises:
-        UserServiceError: If user creation fails.
-    """
+async def create_user_service(db: AsyncSession, user_in: UserCreate) -> User:
+    """Create a new user"""
     trace_id = get_trace_id()
     logger.info(
-        "Creating new user",
+        "Creating user in service",
         extra={
-            "event": "user_creation_start",
-            "phone": user.phone_number,
+            "event": "user_creation_service",
+            "phone": user_in.phone_number,
             "trace_id": trace_id
         }
     )
     try:
-        # Check if user exists
-        existing_user = await get_user_by_phone(db, user.phone_number)
+        # Check if user already exists
+        existing_user = await get_user_by_phone(db, user_in.phone_number)
         if existing_user:
-            logger.warning(
+            logger.info(
                 "User already exists",
                 extra={
-                    "event": "user_creation_failed",
-                    "reason": "user_exists",
-                    "phone": user.phone_number,
+                    "event": "user_exists",
+                    "phone": user_in.phone_number,
                     "trace_id": trace_id
                 }
             )
-            raise UserAlreadyExistsServiceError("User already exists")
-        
-        # Create user
-        user = await create_user_repo(db, user)
+            return existing_user
+
+        # Create new user
+        user = await create_user_repo(db, user_in)
         logger.info(
             "User created successfully",
             extra={
-                "event": "user_creation_success",
+                "event": "user_created_service",
                 "user_id": str(user.id),
-                "phone": user.phone_number,
+                "phone": user_in.phone_number,
                 "trace_id": trace_id
             }
         )
         return user
-    except UserRepositoryError as e:
+    except Exception as e:
         logger.error(
             "Error creating user",
             extra={
-                "event": "user_creation_failed",
-                "reason": "repository_error",
-                "error": str(e),
-                "phone": user.phone_number,
-                "trace_id": trace_id
-            }
-        )
-        raise DatabaseServiceError(str(e))
-    except Exception as e:
-        logger.error(
-            "Unexpected error creating user",
-            extra={
-                "event": "user_creation_failed",
+                "event": "user_creation_failed_service",
                 "reason": "unexpected_error",
+                "phone": user_in.phone_number,
                 "error": str(e),
-                "phone": user.phone_number,
                 "trace_id": trace_id
             }
         )
-        raise DatabaseServiceError("An unexpected error occurred")
+        raise DatabaseError("Failed to create user due to database error")
 
 async def authenticate_user_service(db: AsyncSession, identifier: str, password: str) -> User:
     """
