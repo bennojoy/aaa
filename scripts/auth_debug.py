@@ -13,6 +13,20 @@ import uuid
 # Initialize Rich console for pretty printing
 console = Console()
 
+# API configuration
+API_URL = "http://localhost:8000/api/v1"
+
+def get_auth_token(phone: str = "+9876543210", password: str = "SecurePass123!") -> str:
+    """Get authentication token for testing."""
+    signin_data = {
+        "identifier": phone,
+        "password": password
+    }
+    signin_response = requests.post(f"{API_URL}/auth/signin", json=signin_data)
+    if signin_response.status_code == 200:
+        return signin_response.json().get("access_token")
+    return None
+
 def pretty_print_request(method: str, url: str, headers: Dict[str, str], data: Dict[str, Any]) -> None:
     """Pretty print the request details"""
     table = Table(title="Request Details", show_header=True, header_style="bold magenta")
