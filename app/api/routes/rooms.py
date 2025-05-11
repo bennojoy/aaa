@@ -61,15 +61,15 @@ async def list_rooms(
 
 @router.get("/search", response_model=RoomList)
 async def search_rooms(
-    query: str = Query(..., min_length=1),
+    query: str = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user_id: uuid.UUID = Depends(get_current_user_id)
 ):
-    """Search rooms by name"""
+    """Search rooms by name. If no query is provided, returns all rooms."""
     try:
-        return await search_rooms_service(db, user_id, query, skip, limit)
+        return await search_rooms_service(db, user_id, query or "", skip, limit)
     except DatabaseServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.user import User
+from app.models.user import User, LoginStatus, UserType
 from app.schemas.user import UserCreate, UserLogin
 from app.repositories.user import (
     create_user_repo,
@@ -12,6 +12,10 @@ from app.repositories.user import (
     DatabaseError,
     AliasAlreadyExistsError
 )
+from app.repositories.room import create_room
+from app.repositories.participant import add_participant
+from app.schemas.room import RoomCreate
+from app.schemas.participant import ParticipantCreate
 from app.middlewares.trace_id import get_trace_id
 from app.core.security import hash_password, verify_password
 from app.core.logging import logger
@@ -32,6 +36,75 @@ class DatabaseServiceError(UserServiceError):
 class AliasAlreadyExistsServiceError(UserServiceError):
     """Raised when attempting to use an alias that already exists"""
     pass
+
+async def create_assistant_and_default_room(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Create an assistant user and default room for a new user"""
+    trace_id = get_trace_id()
+    logger.info(
+        "Creating assistant and default room",
+        extra={
+            "event": "assistant_creation_start",
+            "user_id": str(user_id),
+            "trace_id": trace_id
+        }
+    )
+    try:
+        # Get user's phone number
+        user = await db.get(User, user_id)
+        if not user:
+            raise DatabaseError("User not found")
+            
+        # Create assistant user with phone number based on user's phone
+        assistant_phone = f"+888{user.phone_number.lstrip('+')}"  # Use user's phone number with +888 prefix
+        assistant_alias = f"Assistant_{user_id}"
+        assistant_data = UserCreate(
+            phone_number=assistant_phone,
+            alias=assistant_alias,
+            password="bot_password",  # Simple password for bot
+            user_type=UserType.BOT,
+            language="en"
+        )
+        assistant = await create_user_repo(db, assistant_data)
+        
+        # Create default room
+        room_data = RoomCreate(
+            name="Assistant",
+            description="Your personal assistant room"
+        )
+        room = await create_room(db, room_data, user_id)
+        room.is_default = True
+        await db.commit()
+        
+        # Add assistant to room
+        participant_data = ParticipantCreate(
+            user_id=assistant.id,
+            role="member",
+            status="active"
+        )
+        await add_participant(db, room.id, participant_data)
+        
+        logger.info(
+            "Assistant and default room created successfully",
+            extra={
+                "event": "assistant_creation_success",
+                "user_id": str(user_id),
+                "assistant_id": str(assistant.id),
+                "room_id": str(room.id),
+                "trace_id": trace_id
+            }
+        )
+    except Exception as e:
+        logger.error(
+            "Error creating assistant and default room",
+            extra={
+                "event": "assistant_creation_failed",
+                "reason": "unexpected_error",
+                "user_id": str(user_id),
+                "error": str(e),
+                "trace_id": trace_id
+            }
+        )
+        raise DatabaseError("Failed to create assistant and default room")
 
 async def create_user_service(db: AsyncSession, user_in: UserCreate) -> User:
     """Create a new user"""
@@ -60,6 +133,10 @@ async def create_user_service(db: AsyncSession, user_in: UserCreate) -> User:
 
         # Create new user
         user = await create_user_repo(db, user_in)
+        
+        # Create assistant and default room
+        await create_assistant_and_default_room(db, user.id)
+        
         logger.info(
             "User created successfully",
             extra={
