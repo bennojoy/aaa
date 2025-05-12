@@ -129,10 +129,21 @@ async def main():
             participants_response = await get_room_participants(client, token, room_id)
             participants = participants_response.get("participants", [])
             
-            # Log participant details
+            # Log participant details with more information
             logger.info("Room participants:")
             for participant in participants:
-                logger.info(f"- User: {participant.get('alias')} (ID: {participant.get('id')})")
+                participant_id = participant.get("id")
+                user_id = participant.get("user_id")
+                role = participant.get("role")
+                status = participant.get("status")
+                joined_at = participant.get("joined_at")
+                logger.info(
+                    f"- Participant ID: {participant_id}\n"
+                    f"  User ID: {user_id}\n"
+                    f"  Role: {role}\n"
+                    f"  Status: {status}\n"
+                    f"  Joined At: {joined_at}"
+                )
             
             logger.info("Test completed successfully")
             

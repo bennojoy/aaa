@@ -39,7 +39,8 @@ async def create_room(db: AsyncSession, room_in: RoomCreate, user_id: uuid.UUID)
         room = Room(
             name=room_in.name,
             description=room_in.description,
-            created_by=user_id
+            created_by=user_id,
+            type=room_in.type
         )
         db.add(room)
         await db.commit()

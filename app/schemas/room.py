@@ -2,10 +2,12 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 import uuid
+from app.models.room import RoomType
 
 class RoomBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
+    type: RoomType = Field(default=RoomType.USER)
 
 class RoomCreate(RoomBase):
     pass
@@ -13,6 +15,7 @@ class RoomCreate(RoomBase):
 class RoomUpdate(RoomBase):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     assistant_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    type: Optional[RoomType] = None
 
 class RoomResponse(RoomBase):
     id: uuid.UUID

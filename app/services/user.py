@@ -19,6 +19,7 @@ from app.schemas.participant import ParticipantCreate
 from app.middlewares.trace_id import get_trace_id
 from app.core.security import hash_password, verify_password
 from app.core.logging import logger
+from app.models.room import RoomType
 import uuid
 
 class UserServiceError(Exception):
@@ -69,7 +70,8 @@ async def create_assistant_and_default_room(db: AsyncSession, user_id: uuid.UUID
         # Create default room
         room_data = RoomCreate(
             name="Assistant",
-            description="Your personal assistant room"
+            description="Your personal assistant room",
+            type=RoomType.ASSISTANT
         )
         room = await create_room(db, room_data, user_id)
         room.is_default = True

@@ -40,7 +40,8 @@ async def create_room(token: str, name: str = "Test Room") -> Dict:
     async with httpx.AsyncClient() as client:
         payload = {
             "name": name,
-            "description": "Room created by test script"
+            "description": "Room created by test script",
+            "type": "user"  # Default to user type for test rooms
         }
         headers = {"Authorization": f"Bearer {token}"}
         resp = await client.post(f"{API_URL}/rooms", json=payload, headers=headers)
