@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 from app.repositories.participant import (
     add_participant,
     get_participant,
@@ -20,11 +21,15 @@ from app.schemas.participant import (
     ParticipantResponse,
     ParticipantList,
     UserSearchResponse,
-    UserSearchList
+    UserSearchList,
+    MessagePermissionResponse
 )
 from app.core.logging import logger
 from app.middlewares.trace_id import get_trace_id
 from app.core.config import settings
+from app.models.participant import Participant
+from app.models.room import Room, RoomType
+from app.models.user import User, UserType
 import uuid
 
 class ParticipantServiceError(Exception):
@@ -417,4 +422,88 @@ async def transfer_ownership_service(
                 "trace_id": trace_id
             }
         )
-        raise DatabaseServiceError(str(e)) 
+        raise DatabaseServiceError(str(e))
+
+async def check_message_permission_service(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    room_id: uuid.UUID
+) -> MessagePermissionResponse:
+    """
+    Check if a user can send messages in a room and get all non-assistant participants.
+    
+    Args:
+        db (AsyncSession): Database session
+        user_id (UUID): ID of the user to check
+        room_id (UUID): ID of the room to check
+        
+    Returns:
+        MessagePermissionResponse: Permission status and list of participants
+    """
+    trace_id = get_trace_id()
+    logger.info(
+        "Checking message permission",
+        extra={
+            "event": "message_permission_check",
+            "user_id": str(user_id),
+            "room_id": str(room_id),
+            "trace_id": trace_id
+        }
+    )
+    
+    try:
+        # Check if user is a participant in the room
+        participant_query = select(Participant).where(
+            and_(
+                Participant.user_id == user_id,
+                Participant.room_id == room_id,
+                Participant.status == "active"
+            )
+        )
+        result = await db.execute(participant_query)
+        participant = result.scalar_one_or_none()
+        
+        can_send_message = participant is not None
+        
+        # Get all non-assistant participants
+        participants_query = select(Participant).join(User).join(Room).where(
+            and_(
+                Participant.room_id == room_id,
+                Participant.status == "active",
+                User.user_type != UserType.BOT
+            )
+        )
+        result = await db.execute(participants_query)
+        participants = result.scalars().all()
+        
+        logger.info(
+            "Message permission check completed",
+            extra={
+                "event": "message_permission_check_complete",
+                "user_id": str(user_id),
+                "room_id": str(room_id),
+                "can_send_message": can_send_message,
+                "participant_count": len(participants),
+                "trace_id": trace_id
+            }
+        )
+        
+        return MessagePermissionResponse(
+            can_send_message=can_send_message,
+            participants=participants,
+            trace_id=trace_id
+        )
+        
+    except Exception as e:
+        logger.error(
+            "Error checking message permission",
+            extra={
+                "event": "message_permission_check_failed",
+                "reason": "unexpected_error",
+                "user_id": str(user_id),
+                "room_id": str(room_id),
+                "error": str(e),
+                "trace_id": trace_id
+            }
+        )
+        raise 

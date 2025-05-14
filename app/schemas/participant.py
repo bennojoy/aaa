@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import uuid
 from app.models.participant import ParticipantRole, ParticipantStatus
@@ -43,4 +43,9 @@ class UserSearchResponse(BaseModel):
 
 class UserSearchList(BaseModel):
     users: list[UserSearchResponse]
+    trace_id: Optional[str] = None
+
+class MessagePermissionResponse(BaseModel):
+    can_send_message: bool
+    participants: List[ParticipantResponse]
     trace_id: Optional[str] = None 

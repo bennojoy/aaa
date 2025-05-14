@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
@@ -8,7 +8,8 @@ from app.schemas.participant import (
     ParticipantResponse,
     ParticipantList,
     UserSearchResponse,
-    UserSearchList
+    UserSearchList,
+    MessagePermissionResponse
 )
 from app.services.participant import (
     add_participant_service,
@@ -24,11 +25,14 @@ from app.services.participant import (
     DatabaseServiceError,
     PermissionServiceError,
     RoomLimitExceededError,
-    UserRoomLimitExceededError
+    UserRoomLimitExceededError,
+    check_message_permission_service
 )
+from app.middlewares.trace_id import get_trace_id
+from app.core.logging import logger
 import uuid
 
-router = APIRouter()
+router = APIRouter(prefix="/rooms", tags=["participants"])
 
 @router.post("/rooms/{room_id}/participants", response_model=ParticipantResponse)
 async def add_participant(
@@ -140,4 +144,59 @@ async def transfer_ownership(
     except PermissionServiceError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except DatabaseServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{room_id}/message-permission/{user_id}", response_model=MessagePermissionResponse)
+async def check_message_permission(
+    room_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Check if a user can send messages in a room and get all non-assistant participants.
+    This endpoint is intended for system services to check message permissions.
+    
+    Args:
+        room_id (UUID): ID of the room to check
+        user_id (UUID): ID of the user to check permissions for
+        db (AsyncSession): Database session
+        current_user (dict): Current authenticated user (system service)
+        
+    Returns:
+        MessagePermissionResponse: Permission status and list of participants
+    """
+    trace_id = get_trace_id()
+    logger.info(
+        "API: Checking message permission",
+        extra={
+            "event": "api_message_permission_check",
+            "user_id": str(user_id),
+            "room_id": str(room_id),
+            "trace_id": trace_id
+        }
+    )
+    
+    try:
+        result = await check_message_permission_service(
+            db,
+            user_id,
+            room_id
+        )
+        return result
+    except Exception as e:
+        logger.error(
+            "API: Error checking message permission",
+            extra={
+                "event": "api_message_permission_check_failed",
+                "reason": "unexpected_error",
+                "user_id": str(user_id),
+                "room_id": str(room_id),
+                "error": str(e),
+                "trace_id": trace_id
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check message permission"
+        ) 
