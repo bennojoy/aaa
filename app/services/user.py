@@ -39,34 +39,17 @@ class AliasAlreadyExistsServiceError(UserServiceError):
     pass
 
 async def create_assistant_and_default_room(db: AsyncSession, user_id: uuid.UUID) -> None:
-    """Create an assistant user and default room for a new user"""
+    """Create default room for a new user"""
     trace_id = get_trace_id()
     logger.info(
-        "Creating assistant and default room",
+        "Creating default room",
         extra={
-            "event": "assistant_creation_start",
+            "event": "default_room_creation_start",
             "user_id": str(user_id),
             "trace_id": trace_id
         }
     )
     try:
-        # Get user's phone number
-        user = await db.get(User, user_id)
-        if not user:
-            raise DatabaseError("User not found")
-            
-        # Create assistant user with phone number based on user's phone
-        assistant_phone = f"+888{user.phone_number.lstrip('+')}"  # Use user's phone number with +888 prefix
-        assistant_alias = f"Assistant_{user_id}"
-        assistant_data = UserCreate(
-            phone_number=assistant_phone,
-            alias=assistant_alias,
-            password="bot_password",  # Simple password for bot
-            user_type=UserType.BOT,
-            language="en"
-        )
-        assistant = await create_user_repo(db, assistant_data)
-        
         # Create default room
         room_data = RoomCreate(
             name="Assistant",
@@ -77,36 +60,35 @@ async def create_assistant_and_default_room(db: AsyncSession, user_id: uuid.UUID
         room.is_default = True
         await db.commit()
         
-        # Add assistant to room
-        participant_data = ParticipantCreate(
-            user_id=assistant.id,
-            role="member",
+        # Add user as owner
+        user_participant_data = ParticipantCreate(
+            user_id=user_id,
+            role="owner",
             status="active"
         )
-        await add_participant(db, room.id, participant_data)
+        await add_participant(db, room.id, user_participant_data)
         
         logger.info(
-            "Assistant and default room created successfully",
+            "Default room created successfully",
             extra={
-                "event": "assistant_creation_success",
+                "event": "default_room_creation_success",
                 "user_id": str(user_id),
-                "assistant_id": str(assistant.id),
                 "room_id": str(room.id),
                 "trace_id": trace_id
             }
         )
     except Exception as e:
         logger.error(
-            "Error creating assistant and default room",
+            "Error creating default room",
             extra={
-                "event": "assistant_creation_failed",
+                "event": "default_room_creation_failed",
                 "reason": "unexpected_error",
                 "user_id": str(user_id),
                 "error": str(e),
                 "trace_id": trace_id
             }
         )
-        raise DatabaseError("Failed to create assistant and default room")
+        raise DatabaseError("Failed to create default room")
 
 async def create_user_service(db: AsyncSession, user_in: UserCreate) -> User:
     """Create a new user"""

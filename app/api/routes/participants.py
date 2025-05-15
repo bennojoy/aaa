@@ -89,7 +89,11 @@ async def search_users(
 ):
     """Search users globally"""
     try:
-        return await search_users_service(db, query, exclude_room_id)
+        result = await search_users_service(db, query, exclude_room_id)
+        # Always return a list, even if empty
+        if not result or not hasattr(result, 'users'):
+            return UserSearchList(users=[])
+        return result
     except DatabaseServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 

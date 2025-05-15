@@ -243,6 +243,7 @@ async def search_users_service(
     )
     try:
         users = await search_users(db, query, exclude_room_id)
+        # Always return a list, even if empty
         response = UserSearchList(
             users=[
                 UserSearchResponse.model_validate(u, from_attributes=True)

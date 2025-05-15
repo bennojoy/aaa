@@ -60,7 +60,7 @@ async def search_users(token: str, query: str):
     async with httpx.AsyncClient() as client:
         headers = {"Authorization": f"Bearer {token}"}
         params = {"query": query}
-        resp = await client.get(f"{API_URL}/users/search", params=params, headers=headers)
+        resp = await client.get(f"{API_URL}/rooms/users/search", params=params, headers=headers)
         print("[SEARCH USERS]:", resp.status_code, resp.json())
         return resp.json()
 
@@ -130,9 +130,9 @@ async def main():
 
         # Search for the second user globally
         users = await search_users(user1_token, user2_phone)
-        if not users['users']:
+        if not users or not users.get('users'):
             raise Exception("Could not find second user in global search")
-        found_user = users['users'][0]
+        found_user = users['users'][0]  # Get first user from response
         print(f"Found user in global search: {found_user}")
 
         # Add the found user to the room

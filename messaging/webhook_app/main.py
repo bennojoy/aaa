@@ -72,18 +72,26 @@ async def receive_webhook(req: Request):
     sender_id = headers.get("x-emqx-sub", "unknown")
     room_id = payload.get("room_id", "unknown")
     room_type = payload.get("room_type", "unknown")
+    content = payload.get("content", "unknown")
 
     # Add metadata to payload
     payload["trace_id"] = trace_id
     payload["sender_id"] = sender_id
+    
 
     # Route based on room type
-    if room_type == "assistant":
+    if room_type == "assistant" or content.startswith("@ai"):
         topic = "messages.ToAssistant"
     elif room_type == "user":
         topic = "messages.ToUser"
     else:
         topic = "messages.Unknown"
+
+    if content.startswith("@aip"):
+        payload["visibility"] = "private"
+    else:
+        payload["visibility"] = "public"
+        
 
     logging.info(json.dumps({
         "event": "webhook_received",

@@ -102,7 +102,7 @@ async def create_test_user(client: httpx.AsyncClient) -> dict:
 
 async def add_user_to_room(client: httpx.AsyncClient, room_id: str, user_id: str):
     """Add test user to room"""
-    url = f"http://localhost:8000/api/v1/rooms/rooms/{room_id}/participants"
+    url = f"http://localhost:8000/api/v1/rooms/{room_id}/participants"
     data = {
         "user_id": user_id
     }
