@@ -45,7 +45,8 @@ class TokenResponse(BaseModel):
     """Schema for token response"""
     access_token: str
     token_type: str
-    trace_id: Optional[str] = None
+    trace_id: str
+    user_id: str
 
 class AliasCheck(BaseModel):
     """Schema for checking alias availability"""

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
@@ -20,14 +20,19 @@ class Participant(Base):
     __tablename__ = "participants"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    room_id = Column(UUID(as_uuid=True), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    room_id = Column(UUID(as_uuid=True), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(Enum(ParticipantRole), nullable=False, default=ParticipantRole.MEMBER)
     status = Column(Enum(ParticipantStatus), nullable=False, default=ParticipantStatus.ACTIVE)
     joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_activity = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
+
+    # Add unique index to prevent duplicate participants
+    __table_args__ = (
+        Index('ix_participants_room_user', 'room_id', 'user_id', unique=True),
+    )
 
     # Relationships
     room = relationship("Room", back_populates="participants")

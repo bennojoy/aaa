@@ -34,7 +34,7 @@ import uuid
 
 router = APIRouter(prefix="/rooms", tags=["participants"])
 
-@router.post("/rooms/{room_id}/participants", response_model=ParticipantResponse)
+@router.post("/{room_id}/participants", response_model=ParticipantResponse)
 async def add_participant(
     room_id: uuid.UUID,
     participant_in: ParticipantCreate,
@@ -55,7 +55,7 @@ async def add_participant(
     except DatabaseServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/rooms/{room_id}/participants", response_model=ParticipantList)
+@router.get("/{room_id}/participants", response_model=ParticipantList)
 async def get_room_participants(
     room_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -67,7 +67,7 @@ async def get_room_participants(
     except DatabaseServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/rooms/{room_id}/participants/search", response_model=ParticipantList)
+@router.get("/{room_id}/participants/search", response_model=ParticipantList)
 async def search_room_participants(
     room_id: uuid.UUID,
     query: str = Query(None),
@@ -93,7 +93,7 @@ async def search_users(
     except DatabaseServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.put("/rooms/{room_id}/participants/{user_id}", response_model=ParticipantResponse)
+@router.put("/{room_id}/participants/{user_id}", response_model=ParticipantResponse)
 async def update_participant(
     room_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -111,7 +111,7 @@ async def update_participant(
     except DatabaseServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/rooms/{room_id}/participants/{user_id}")
+@router.delete("/{room_id}/participants/{user_id}")
 async def remove_participant(
     room_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -129,7 +129,7 @@ async def remove_participant(
     except DatabaseServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/rooms/{room_id}/transfer-ownership/{new_owner_id}", response_model=ParticipantResponse)
+@router.post("/{room_id}/transfer-ownership/{new_owner_id}", response_model=ParticipantResponse)
 async def transfer_ownership(
     room_id: uuid.UUID,
     new_owner_id: uuid.UUID,

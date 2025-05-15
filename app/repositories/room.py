@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, delete, func, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.models.room import Room
 from app.schemas.room import RoomCreate, RoomUpdate
@@ -174,12 +174,19 @@ async def search_rooms(db: AsyncSession, user_id: uuid.UUID, query: str, skip: i
         }
     )
     try:
+        # Get rooms where user is creator or participant
+        from app.models.participant import Participant
+        
         # Get total count
         count_result = await db.execute(
             select(func.count())
             .select_from(Room)
+            .outerjoin(Participant, Room.id == Participant.room_id)
             .filter(
-                Room.created_by == user_id,
+                or_(
+                    Room.created_by == user_id,
+                    Participant.user_id == user_id
+                ),
                 Room.name.ilike(f"%{query}%")
             )
         )
@@ -188,8 +195,12 @@ async def search_rooms(db: AsyncSession, user_id: uuid.UUID, query: str, skip: i
         # Get rooms
         result = await db.execute(
             select(Room)
+            .outerjoin(Participant, Room.id == Participant.room_id)
             .filter(
-                Room.created_by == user_id,
+                or_(
+                    Room.created_by == user_id,
+                    Participant.user_id == user_id
+                ),
                 Room.name.ilike(f"%{query}%")
             )
             .offset(skip)

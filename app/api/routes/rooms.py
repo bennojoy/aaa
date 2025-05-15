@@ -25,12 +25,12 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 async def get_current_user_id(token: str = Depends(oauth2_scheme)) -> uuid.UUID:
     """Get current user ID from token"""
     payload = decode_access_token(token)
-    if not payload or "sub" not in payload:
+    if not payload or "client_attrs" not in payload or "sub" not in payload["client_attrs"]:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials"
         )
-    return payload["sub"]
+    return payload["client_attrs"]["sub"]
 
 @router.post("", response_model=RoomResponse)
 async def create_room(

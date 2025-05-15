@@ -30,7 +30,8 @@ async def get_current_user(
     if payload is None:
         raise credentials_exception
     
-    user_id: str = payload.get("sub")
+    # Get user ID from client_attrs.sub
+    user_id = payload.get("client_attrs", {}).get("sub")
     if user_id is None:
         raise credentials_exception
 

@@ -127,7 +127,8 @@ async def signin(user_in: UserLogin, db: AsyncSession = Depends(get_db)):
         return TokenResponse(
             access_token=access_token,
             token_type="bearer",
-            trace_id=trace_id
+            trace_id=trace_id,
+            user_id=str(user.id)
         )
     except Exception as e:
         logger.error(

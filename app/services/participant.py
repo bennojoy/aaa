@@ -466,13 +466,13 @@ async def check_message_permission_service(
         can_send_message = participant is not None
         
         # Get all non-assistant participants
-        participants_query = select(Participant).join(User).join(Room).where(
+        participants_query = select(Participant).join(User).where(
             and_(
                 Participant.room_id == room_id,
                 Participant.status == "active",
                 User.user_type != UserType.BOT
             )
-        )
+        ).distinct()
         result = await db.execute(participants_query)
         participants = result.scalars().all()
         
