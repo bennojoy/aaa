@@ -4,6 +4,8 @@ import asyncio
 import httpx
 from .base_consumer import BaseConsumer
 from ..config import TOPICS, CONSUMER_GROUPS
+from messaging.ai_agents.runner import run_assistant_agent
+from messaging.ai_agents.agent_context import UserContext
 
 class AssistantConsumer(BaseConsumer):
     def __init__(self):
@@ -75,8 +77,39 @@ class AssistantConsumer(BaseConsumer):
             "sender_id": payload["sender_id"]
         }))
 
-        # Get AI response
-        ai_response = await self.get_ai_response(payload, trace_id)
+        # Build user context for the agent
+        user_context = UserContext(
+            name=None,  # You can fill this if available
+            language=payload.get("language", "en"),
+            sender_id=payload["sender_id"],
+            receiver_id=None,
+            room=payload["room_id"]
+        )
+
+        # Format message for the agent
+        # If the message starts with @ai, remove it
+        user_message = payload["content"]
+        if user_message.startswith("@ai"):
+            user_message = user_message[4:].strip()
+
+        # Call the runner to get the AI reply
+        try:
+            ai_response = await run_assistant_agent(
+                user_message=user_message,
+                user_context=user_context,
+                trace_id=trace_id
+            )
+        except Exception as e:
+            logging.error({
+                "event": "message_processing_failure",
+                "trace_id": trace_id,
+                "error": str(e),
+                "topic": msg.topic,
+                "partition": msg.partition,
+                "offset": msg.offset
+            })
+            return
+
         if not ai_response:
             logging.warning(f"No AI response generated for trace_id: {trace_id}")
             return
@@ -95,11 +128,6 @@ class AssistantConsumer(BaseConsumer):
         }))
         
         await self.send_to_recipients(response_payload, recipients, "system", visibility)
-
-    async def get_ai_response(self, payload: dict, trace_id: str) -> str:
-        """Get response from AI service"""
-        logging.info(f"Getting AI response for trace_id: {trace_id}")
-        return "hi from ai"
 
 async def main():
     consumer = AssistantConsumer()
