@@ -32,6 +32,7 @@ class Room(Base):
     # Relationships
     creator = relationship("User", foreign_keys=[created_by])
     participants = relationship("Participant", back_populates="room", cascade="all, delete-orphan")
+    reminders = relationship("Reminder", back_populates="room", cascade="all, delete-orphan")
     # messages = relationship("Message", back_populates="room", cascade="all, delete-orphan", lazy="dynamic") 
 
     def __repr__(self):

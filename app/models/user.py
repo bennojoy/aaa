@@ -34,6 +34,7 @@ class User(Base):
     # Relationships
     rooms = relationship("Room", back_populates="creator", foreign_keys="Room.created_by")
     participations = relationship("Participant", back_populates="user", cascade="all, delete-orphan")
+    created_reminders = relationship("Reminder", back_populates="created_by", foreign_keys="Reminder.created_by_user_id", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User(id={self.id}, phone={self.phone_number}, alias={self.alias})>" 
