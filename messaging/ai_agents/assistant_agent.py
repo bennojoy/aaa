@@ -13,6 +13,12 @@ from messaging.ai_agents.translation_tools import (
     set_incoming_translation_tool,
     clear_translation_tool
 )
+from messaging.ai_agents.reminder_tools import (
+    create_reminder_tool,
+    list_room_reminders_tool,
+    update_reminder_tool,
+    delete_reminder_tool
+)
 
 # ---------- JSON Logger Setup ----------
 class JSONFormatter(logging.Formatter):
@@ -27,27 +33,6 @@ handler = logging.StreamHandler()
 handler.setFormatter(JSONFormatter())
 logger.addHandler(handler)
 
-# ---------- Reminder Tool ----------
-class ReminderInput(BaseModel):
-    date: str
-    time: str
-    message: str
-
-@function_tool(name_override="reminder")
-def reminder_tool(ctx: RunContextWrapper[Any], input: ReminderInput) -> str:
-    try:
-        datetime.strptime(input.date, "%Y-%m-%d")
-        datetime.strptime(input.time, "%H:%M")
-    except ValueError:
-        return "Invalid date or time format. Please use YYYY-MM-DD and HH:MM."
-
-    logger.info({
-        "event": "tool_called",
-        "tool": "reminder",
-        "input": input.model_dump()
-    })
-    return f"⏰ Reminder set for {input.date} at {input.time}: {input.message}"
-
 # ---------- Instructions ----------
 def dynamic_reminder_instructions(ctx: RunContextWrapper[UserContext], agent: Agent[UserContext]) -> str:
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -59,7 +44,25 @@ def dynamic_reminder_instructions(ctx: RunContextWrapper[UserContext], agent: Ag
 
     Every message you send must begin with '@aiReminderAgent::'. This helps identify who is speaking.
 
-    Use the `reminder` tool to schedule reminders. Convert times like "tomorrow 8am" to absolute UTC.
+    You have access to these tools:
+    - create_reminder_tool: Create a new reminder with title, optional description, start time, and recurrence rule
+    - list_room_reminders_tool: List all reminders in the current room
+    - update_reminder_tool: Update an existing reminder's properties
+    - delete_reminder_tool: Delete a reminder by ID
+
+    When handling reminder requests:
+    1. For creating reminders:
+       - Convert relative times (e.g., "tomorrow 8am") to absolute UTC times
+       - Use ISO format for dates (YYYY-MM-DDTHH:MM:SS+00:00)
+       - For recurring reminders, use RRule format (e.g., "FREQ=DAILY;COUNT=3")
+    2. For listing reminders:
+       - Show all active reminders in the room
+    3. For updating reminders:
+       - Only update the fields that need to change
+    4. For deleting reminders:
+       - Confirm the deletion with the reminder title
+
+    Always provide clear feedback about the action taken.
     """
 
 def translate_agent_instructions(ctx: RunContextWrapper[UserContext], agent: Agent[UserContext]) -> str:
@@ -97,9 +100,6 @@ def assistant_agent_instructions(ctx: RunContextWrapper[UserContext], agent: Age
     Every message you send must begin with '@ai::'. This helps identify the source of each response.
     """
 
-# ---------- Translation Tools ----------
-# Using imported tools directly from translation_tools.py
-
 # ---------- Agents Setup ----------
 translate_agent = Agent[UserContext](
     name="TranslateAgent",
@@ -114,7 +114,12 @@ translate_agent = Agent[UserContext](
 reminder_agent = Agent[UserContext](
     name="ReminderAgent",
     instructions=dynamic_reminder_instructions,
-    tools=[reminder_tool]
+    tools=[
+        create_reminder_tool,
+        list_room_reminders_tool,
+        update_reminder_tool,
+        delete_reminder_tool
+    ]
 )
 
 web_agent = Agent(

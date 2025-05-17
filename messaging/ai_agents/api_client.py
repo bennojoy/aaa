@@ -49,7 +49,7 @@ class APIClient:
         headers: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """Internal method to make the actual HTTP request"""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:  # Enable automatic redirect following
             try:
                 response = await client.request(
                     method,
