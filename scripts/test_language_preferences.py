@@ -73,10 +73,29 @@ async def main():
             room_id = room["id"]
             print(f"Room created: {room['name']}")
 
-            # 4. Set language preferences
-            print("\nSetting language preferences...")
-            language_preferences = {
+            # 4. Test setting only outgoing language
+            print("\nSetting only outgoing language...")
+            outgoing_only = {
                 "outgoing_language": "es",  # Spanish for outgoing messages
+                "incoming_language": None   # No incoming language preference
+            }
+            
+            preferences = await make_request(
+                client,
+                "PUT",
+                f"/api/users/{user['id']}/rooms/{room_id}/language-preferences",
+                data=outgoing_only,
+                headers=headers
+            )
+            
+            print("\nOutgoing language set successfully!")
+            print(f"Outgoing language: {preferences['outgoing_language']}")
+            print(f"Incoming language: {preferences['incoming_language']}")
+
+            # 5. Test setting only incoming language
+            print("\nSetting only incoming language...")
+            incoming_only = {
+                "outgoing_language": None,  # Keep outgoing as is
                 "incoming_language": "it"   # Italian for incoming messages
             }
             
@@ -84,16 +103,47 @@ async def main():
                 client,
                 "PUT",
                 f"/api/users/{user['id']}/rooms/{room_id}/language-preferences",
-                data=language_preferences,
+                data=incoming_only,
                 headers=headers
             )
             
-            print("\nLanguage preferences set successfully!")
+            print("\nIncoming language set successfully!")
             print(f"Outgoing language: {preferences['outgoing_language']}")
             print(f"Incoming language: {preferences['incoming_language']}")
 
-            # 5. Verify preferences
-            print("\nVerifying preferences...")
+            # 6. Test clearing outgoing language
+            print("\nClearing outgoing language...")
+            clear_outgoing = {
+                "outgoing_language": None,
+                "incoming_language": None  # Keep incoming as is
+            }
+            
+            preferences = await make_request(
+                client,
+                "PUT",
+                f"/api/users/{user['id']}/rooms/{room_id}/language-preferences",
+                data=clear_outgoing,
+                headers=headers
+            )
+            
+            print("\nOutgoing language cleared successfully!")
+            print(f"Outgoing language: {preferences['outgoing_language']}")
+            print(f"Incoming language: {preferences['incoming_language']}")
+
+            # 7. Test resetting all preferences
+            print("\nResetting all preferences...")
+            reset_response = await make_request(
+                client,
+                "DELETE",
+                f"/api/users/{user['id']}/rooms/{room_id}/language-preferences",
+                headers=headers
+            )
+            
+            print("\nAll preferences reset successfully!")
+            print(f"Reset message: {reset_response['message']}")
+
+            # 8. Verify final state
+            print("\nVerifying final preferences...")
             verify_preferences = await make_request(
                 client,
                 "GET",
@@ -101,8 +151,7 @@ async def main():
                 headers=headers
             )
             
-            print("\nVerification successful!")
-            print(f"Current preferences:")
+            print("\nFinal preferences:")
             print(f"Outgoing language: {verify_preferences['outgoing_language']}")
             print(f"Incoming language: {verify_preferences['incoming_language']}")
 

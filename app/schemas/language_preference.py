@@ -3,14 +3,14 @@ from datetime import datetime
 from typing import Optional
 
 class LanguagePreferenceUpdate(BaseModel):
-    outgoing_language: str = Field(..., min_length=2, max_length=10)
-    incoming_language: str = Field(..., min_length=2, max_length=10)
+    outgoing_language: Optional[str] = None
+    incoming_language: Optional[str] = None
 
 class LanguagePreferenceResponse(BaseModel):
     user_id: str
     room_id: str
-    outgoing_language: str
-    incoming_language: str
+    outgoing_language: Optional[str] = None
+    incoming_language: Optional[str] = None
     updated_at: datetime
 
 class LanguagePreferenceResetResponse(BaseModel):

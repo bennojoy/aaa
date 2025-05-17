@@ -74,9 +74,9 @@ def translate_agent_instructions(ctx: RunContextWrapper[UserContext], agent: Age
 
     When you receive a message:
     1. If it's a command about translation preferences:
-       - For "send messages in [language]" -> use set_outgoing_translation_tool
-       - For "translate received messages to [language]" -> use set_incoming_translation_tool
-       - For "stop translating" -> use clear_translation_tool
+       - For "@ai send my messages in [language]" -> use set_outgoing_translation_tool
+       - For "@ai translate received messages to [language]" -> use set_incoming_translation_tool
+       - For "@ai stop translating" -> use clear_translation_tool
     2. If it's text that needs translation:
        - Translate it directly in your response
     3. Always respond in the user's preferred language

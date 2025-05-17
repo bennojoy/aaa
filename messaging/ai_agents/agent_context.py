@@ -7,3 +7,4 @@ class UserContext(BaseModel):
     sender_id: str | None = None
     receiver_id: str | None = None
     room: str | None = None
+    token: str | None = None

@@ -27,13 +27,12 @@ async def update_language_preferences(
     """Update language preferences for a user in a specific room"""
     try:
         user_id_uuid = uuid.UUID(user_id)
-        if current_user.id != user_id_uuid:
-            raise HTTPException(status_code=403, detail="Not authorized to update preferences for this user")
+        room_id_uuid = uuid.UUID(room_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+        raise HTTPException(status_code=400, detail="Invalid ID format")
     
     service = LanguagePreferenceService(db)
-    return await service.update_preferences(str(current_user.id), room_id, preferences)
+    return await service.update_preferences(str(user_id_uuid), str(room_id_uuid), preferences)
 
 @router.get(
     "/users/{user_id}/rooms/{room_id}/language-preferences",
@@ -48,13 +47,12 @@ async def get_language_preferences(
     """Get language preferences for a user in a specific room"""
     try:
         user_id_uuid = uuid.UUID(user_id)
-        if current_user.id != user_id_uuid:
-            raise HTTPException(status_code=403, detail="Not authorized to view preferences for this user")
+        room_id_uuid = uuid.UUID(room_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+        raise HTTPException(status_code=400, detail="Invalid ID format")
     
     service = LanguagePreferenceService(db)
-    return await service.get_preferences(str(current_user.id), room_id)
+    return await service.get_preferences(str(user_id_uuid), str(room_id_uuid))
 
 @router.delete(
     "/users/{user_id}/rooms/{room_id}/language-preferences",
@@ -69,10 +67,9 @@ async def reset_language_preferences(
     """Reset language preferences for a user in a specific room to default values"""
     try:
         user_id_uuid = uuid.UUID(user_id)
-        if current_user.id != user_id_uuid:
-            raise HTTPException(status_code=403, detail="Not authorized to reset preferences for this user")
+        room_id_uuid = uuid.UUID(room_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+        raise HTTPException(status_code=400, detail="Invalid ID format")
     
     service = LanguagePreferenceService(db)
-    return await service.reset_preferences(str(current_user.id), room_id) 
+    return await service.reset_preferences(str(user_id_uuid), str(room_id_uuid)) 

@@ -1,9 +1,10 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models.language_preference import RoomUserLanguagePreference
-from app.schemas.language_preference import LanguagePreferenceUpdate
+from app.schemas.language_preference import LanguagePreferenceUpdate, LanguagePreferenceResponse
 from fastapi import HTTPException
 import uuid
+from datetime import datetime
 
 class LanguagePreferenceService:
     def __init__(self, db: AsyncSession):
@@ -14,16 +15,13 @@ class LanguagePreferenceService:
         user_id: str, 
         room_id: str, 
         preferences: LanguagePreferenceUpdate
-    ) -> RoomUserLanguagePreference:
+    ) -> LanguagePreferenceResponse:
         # Convert string IDs to UUID for validation
         try:
             user_id_uuid = uuid.UUID(user_id)
             room_id_uuid = uuid.UUID(room_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid ID format")
-        
-        # Check if user is member of room
-        # TODO: Add room membership check
         
         stmt = select(RoomUserLanguagePreference).where(
             RoomUserLanguagePreference.user_id == str(user_id_uuid),
@@ -33,8 +31,11 @@ class LanguagePreferenceService:
         db_preference = result.scalar_one_or_none()
 
         if db_preference:
-            db_preference.outgoing_language = preferences.outgoing_language
-            db_preference.incoming_language = preferences.incoming_language
+            # Only update fields that are provided (not None)
+            if preferences.outgoing_language is not None:
+                db_preference.outgoing_language = preferences.outgoing_language
+            if preferences.incoming_language is not None:
+                db_preference.incoming_language = preferences.incoming_language
         else:
             db_preference = RoomUserLanguagePreference(
                 user_id=str(user_id_uuid),
@@ -46,13 +47,20 @@ class LanguagePreferenceService:
 
         await self.db.commit()
         await self.db.refresh(db_preference)
-        return db_preference
+        
+        return LanguagePreferenceResponse(
+            user_id=db_preference.user_id,
+            room_id=db_preference.room_id,
+            outgoing_language=db_preference.outgoing_language,
+            incoming_language=db_preference.incoming_language,
+            updated_at=db_preference.updated_at
+        )
 
     async def get_preferences(
         self, 
         user_id: str, 
         room_id: str
-    ) -> RoomUserLanguagePreference:
+    ) -> LanguagePreferenceResponse:
         try:
             user_id_uuid = uuid.UUID(user_id)
             room_id_uuid = uuid.UUID(room_id)
@@ -67,11 +75,22 @@ class LanguagePreferenceService:
         preference = result.scalar_one_or_none()
 
         if not preference:
-            raise HTTPException(
-                status_code=404,
-                detail="Language preferences not found"
+            # Return default response with None values if no preferences exist
+            return LanguagePreferenceResponse(
+                user_id=str(user_id_uuid),
+                room_id=str(room_id_uuid),
+                outgoing_language=None,
+                incoming_language=None,
+                updated_at=datetime.utcnow()
             )
-        return preference
+            
+        return LanguagePreferenceResponse(
+            user_id=preference.user_id,
+            room_id=preference.room_id,
+            outgoing_language=preference.outgoing_language,
+            incoming_language=preference.incoming_language,
+            updated_at=preference.updated_at
+        )
 
     async def reset_preferences(
         self, 

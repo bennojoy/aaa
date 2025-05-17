@@ -6,6 +6,6 @@ class RoomUserLanguagePreference(Base):
 
     user_id = Column(String(255), primary_key=True)
     room_id = Column(String(255), primary_key=True)
-    outgoing_language = Column(String(10), default="en")
-    incoming_language = Column(String(10), default="en")
+    outgoing_language = Column(String(10), nullable=True)
+    incoming_language = Column(String(10), nullable=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now()) 

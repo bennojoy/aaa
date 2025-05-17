@@ -83,7 +83,8 @@ class AssistantConsumer(BaseConsumer):
             language=payload.get("language", "en"),
             sender_id=payload["sender_id"],
             receiver_id=None,
-            room=payload["room_id"]
+            room=payload["room_id"],
+            token=self.system_token
         )
 
         # Format message for the agent
