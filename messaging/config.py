@@ -11,11 +11,13 @@ SYSTEM_PASSWORD = "system123"
 TOPICS = {
     "TO_USER": "messages.ToUser",
     "TO_ASSISTANT": "messages.ToAssistant",
+    "TO_TRANSLATION": "messages.ToTranslation",
     "OUTGOING": "messages.outgoing"
 }
 
 # Consumer groups
 CONSUMER_GROUPS = {
-    "USER": "user-message-consumer",
-    "ASSISTANT": "assistant-message-consumer"
+    "USER": "user_group",
+    "ASSISTANT": "assistant_group",
+    "TRANSLATION": "translation_group"
 } 

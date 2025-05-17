@@ -2,12 +2,13 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Dict, List
+from typing import Dict, List, Any
 from aiokafka.structs import TopicPartition
 from aiokafka.errors import KafkaConnectionError
 import httpx
+import aiohttp
 
-from ..config import RETRY_DELAY, OUTPUT_TOPIC
+from ..config import RETRY_DELAY, OUTPUT_TOPIC, TOPICS
 from ..utils.auth import get_system_token
 from ..utils.kafka import setup_kafka_consumer, setup_kafka_producer, send_message
 from ..utils.permissions import check_message_permission
@@ -20,6 +21,7 @@ class BaseConsumer:
         self.producer = None
         self.http_client = None
         self.system_token = None
+        self.api_base_url = "http://localhost:8000/api/v1"
 
     async def setup(self):
         """Setup consumer, producer, and HTTP client"""
@@ -164,4 +166,48 @@ class BaseConsumer:
                 }))
                 await asyncio.sleep(RETRY_DELAY)
             finally:
-                await self.cleanup() 
+                await self.cleanup()
+
+    async def get_language_preferences(self, user_id: str, room_id: str) -> Dict[str, Any]:
+        """Get language preferences for a user in a room"""
+        try:
+            response = await self.http_client.get(
+                f"http://localhost:8000/api/users/{user_id}/rooms/{room_id}/language-preferences",
+                headers={"X-Trace-ID": str(uuid.uuid4())}
+            )
+            if response.status_code == 200:
+                return response.json()
+            logging.warning(f"Failed to get language preferences: {response.status_code}")
+            return None
+        except Exception as e:
+            logging.error(f"Error getting language preferences: {str(e)}")
+            return None
+
+    async def publish_to_translation(self, payload: Dict[str, Any]):
+        """Publish message to translation topic"""
+        try:
+            # Implementation depends on your Kafka setup
+            # This is a placeholder for the actual Kafka producer code
+            await self.producer.send(
+                TOPICS["TO_TRANSLATION"],
+                value=payload
+            )
+        except Exception as e:
+            logging.error(f"Error publishing to translation topic: {str(e)}")
+            raise
+
+    async def send_to_recipient(self, message: Dict[str, Any], recipient_id: str):
+        """Send message to a specific recipient"""
+        try:
+            # Implementation depends on your message sending setup
+            # This is a placeholder for the actual message sending code
+            await self.producer.send(
+                TOPICS["OUTGOING"],
+                value={
+                    **message,
+                    "recipient_id": recipient_id
+                }
+            )
+        except Exception as e:
+            logging.error(f"Error sending message to recipient: {str(e)}")
+            raise 
