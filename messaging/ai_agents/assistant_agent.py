@@ -1,7 +1,7 @@
 import logging
 import json
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timezone, timedelta
+from typing import Any, Optional, Dict
 
 from agents import Agent, Runner, function_tool, handoff, RunContextWrapper, WebSearchTool, HandoffInputData
 from pydantic import BaseModel
@@ -19,6 +19,7 @@ from messaging.ai_agents.reminder_tools import (
     update_reminder_tool,
     delete_reminder_tool
 )
+from messaging.ai_agents.api_client import APIClient
 
 # ---------- JSON Logger Setup ----------
 class JSONFormatter(logging.Formatter):
@@ -35,34 +36,70 @@ logger.addHandler(handler)
 
 # ---------- Instructions ----------
 def dynamic_reminder_instructions(ctx: RunContextWrapper[UserContext], agent: Agent[UserContext]) -> str:
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    language = ctx.context.language or "en"
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc + timedelta(minutes=ctx.context.timezone_offset) if ctx.context.timezone_offset else now_utc
+    
     return f"""
-    You are a reminder agent. The current UTC date and time is: {now_utc}.
-    The user prefers responses in this language: {language}.
-    Always respond in that language.
+    You are a helpful assistant that can manage reminders. You MUST use the provided tools for ALL operations.
 
-    Every message you send must begin with '@aiReminderAgent::'. This helps identify who is speaking.
+    Current Time Context:
+    - UTC Time: {now_utc.strftime("%Y-%m-%d %H:%M UTC")}
+    - Local Time: {now_local.strftime("%Y-%m-%d %H:%M")} (Jakarta time)
 
-    You have access to these tools:
-    - create_reminder_tool: Create a new reminder with title, optional description, start time, and recurrence rule
-    - list_room_reminders_tool: List all reminders in the current room
-    - update_reminder_tool: Update an existing reminder's properties
-    - delete_reminder_tool: Delete a reminder by ID
+    Available Tools:
+    1. create_reminder_tool: Use this tool to create ANY new reminder
+       - ALWAYS send times in UTC format
+       - NEVER send local times to the tool
+       - Example: If user says "tomorrow 3 PM", convert to UTC first
+    2. list_room_reminders_tool: Use this tool to list ALL reminders in the room
+    3. update_reminder_tool: Use this tool to update ANY existing reminder
+       - ALWAYS send times in UTC format
+       - NEVER send local times to the tool
+    4. delete_reminder_tool: Use this tool to delete ANY reminder
 
-    When handling reminder requests:
-    1. For creating reminders:
-       - Convert relative times (e.g., "tomorrow 8am") to absolute UTC times
-       - Use ISO format for dates (YYYY-MM-DDTHH:MM:SS+00:00)
-       - For recurring reminders, use RRule format (e.g., "FREQ=DAILY;COUNT=3")
-    2. For listing reminders:
-       - Show all active reminders in the room
-    3. For updating reminders:
-       - Only update the fields that need to change
-    4. For deleting reminders:
-       - Confirm the deletion with the reminder title
+    IMPORTANT: You MUST use these tools for EVERY operation. Do not try to handle operations without using the tools.
 
-    Always provide clear feedback about the action taken.
+    Time Handling Rules:
+    - ALL times sent to tools MUST be in UTC
+    - NEVER send local times to any tool
+    - Use the current UTC time ({now_utc.strftime("%Y-%m-%d %H:%M UTC")}) as reference
+    - When user gives a local time, convert it to UTC before sending to tools
+    - When displaying times to user, convert UTC to local time
+    - Times are shown in 12-hour format with AM/PM
+    - Each displayed time includes the timezone indicator (e.g., "9:00 AM (Jakarta time)")
+    - The user's timezone offset is automatically detected from their client timestamp
+
+    For creating reminders:
+    - ALWAYS use create_reminder_tool
+    - Convert user's local time to UTC before sending to the tool
+    - Use the current UTC time as reference for "now", "today", "tomorrow"
+    - Confirm the time in the user's local timezone after creation
+    - Use the current year for any dates
+
+    For listing reminders:
+    - ALWAYS use list_room_reminders_tool
+    - Show all times in the user's local timezone
+    - Include the timezone indicator for clarity
+    - Format times in a user-friendly way (e.g., "9:00 AM (Jakarta time)")
+
+    For updating reminders:
+    - ALWAYS use update_reminder_tool
+    - Convert user's local time to UTC before sending to the tool
+    - Confirm the new time in the user's local timezone
+
+    For deleting reminders:
+    - ALWAYS use delete_reminder_tool
+    - Confirm the deletion with the reminder title
+    - Show the time in the user's local timezone in the confirmation
+
+    Remember to:
+    - ALWAYS use the appropriate tool for EVERY operation
+    - NEVER send local times to any tool - convert to UTC first
+    - Use the current UTC time as reference for relative times
+    - Always be clear about the timezone when discussing times
+    - Format times in a user-friendly way
+    - Include timezone indicators in all time displays
+    - Use the current year for any dates
     """
 
 def translate_agent_instructions(ctx: RunContextWrapper[UserContext], agent: Agent[UserContext]) -> str:
@@ -142,5 +179,48 @@ assistant_agent = Agent[UserContext](
         handoff(translate_agent),
     ]
 )
+
+api_client = APIClient()
+
+class AssistantAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            name="assistant",
+            description="A helpful assistant that can manage reminders",
+            instructions=dynamic_reminder_instructions,
+            tools=[
+                create_reminder_tool,
+                list_room_reminders_tool,
+                update_reminder_tool,
+                delete_reminder_tool
+            ]
+        )
+        
+    async def _process_message(
+        self,
+        session: RunContextWrapper[UserContext],
+        message: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Process incoming message and update context if needed."""
+        try:
+            # If metadata contains client timestamp, calculate timezone offset
+            if metadata and 'client_timestamp' in metadata:
+                client_time = datetime.fromisoformat(metadata['client_timestamp'])
+                server_time = datetime.now(timezone.utc)
+                # Calculate offset in minutes
+                offset_minutes = int((client_time - server_time).total_seconds() / 60)
+                session.context.timezone_offset = offset_minutes
+                logger.info(f"Updated timezone offset to {offset_minutes} minutes")
+            
+            # Process the message with the agent
+            response = await self.agent.ainvoke({
+                "input": message,
+                "context": session.context.dict()
+            })
+            return response["output"]
+        except Exception as e:
+            logger.error(f"Error processing message: {str(e)}")
+            return f"Error processing message: {str(e)}"
 
 

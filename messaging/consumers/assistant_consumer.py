@@ -2,6 +2,7 @@ import json
 import logging
 import asyncio
 import httpx
+from datetime import datetime, timezone
 from .base_consumer import BaseConsumer
 from ..config import TOPICS, CONSUMER_GROUPS
 from messaging.ai_agents.runner import run_assistant_agent
@@ -77,6 +78,20 @@ class AssistantConsumer(BaseConsumer):
             "sender_id": payload["sender_id"]
         }))
 
+        # Calculate timezone offset from client timestamp
+        timezone_offset = None
+        client_timestamp = payload.get("client_timestamp")
+        if client_timestamp:
+            try:
+                client_time = datetime.fromisoformat(client_timestamp)
+                server_time = datetime.now(timezone.utc)
+                # Calculate offset in minutes
+                offset_minutes = int((client_time - server_time).total_seconds() / 60)
+                timezone_offset = offset_minutes
+                logging.info(f"Updated timezone offset to {offset_minutes} minutes for trace_id: {trace_id}")
+            except Exception as e:
+                logging.error(f"Error calculating timezone offset for trace_id: {trace_id}, error: {e}")
+
         # Build user context for the agent
         user_context = UserContext(
             name=None,  # You can fill this if available
@@ -84,7 +99,8 @@ class AssistantConsumer(BaseConsumer):
             sender_id=payload["sender_id"],
             receiver_id=None,
             room=payload["room_id"],
-            token=self.system_token
+            token=self.system_token,
+            timezone_offset=timezone_offset
         )
 
         # Format message for the agent

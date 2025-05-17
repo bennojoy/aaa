@@ -8,6 +8,35 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 api_client = APIClient()
 
+def format_local_time(utc_time: str, offset_minutes: int) -> str:
+    """Convert UTC time to local time with timezone indicator."""
+    try:
+        # Parse UTC time
+        dt = datetime.fromisoformat(utc_time.replace('Z', '+00:00'))
+        
+        # Convert to local time
+        local_dt = dt + timedelta(minutes=offset_minutes)
+        
+        # Format time
+        time_str = local_dt.strftime("%I:%M %p")  # e.g., "09:00 AM"
+        
+        # Get timezone name based on offset
+        if offset_minutes == 420:  # UTC+7
+            tz_name = "Jakarta time"
+        elif offset_minutes == 0:
+            tz_name = "UTC"
+        else:
+            # Format offset as +/-HH:MM
+            hours = abs(offset_minutes) // 60
+            minutes = abs(offset_minutes) % 60
+            sign = "+" if offset_minutes >= 0 else "-"
+            tz_name = f"UTC{sign}{hours:02d}:{minutes:02d}"
+        
+        return f"{time_str} ({tz_name})"
+    except Exception as e:
+        logger.error(f"Error formatting time: {str(e)}")
+        return utc_time  # Return original time if conversion fails
+
 @function_tool
 async def create_reminder_tool(
     session: RunContextWrapper[UserContext],
@@ -24,6 +53,20 @@ async def create_reminder_tool(
         # If no start_time provided, default to 1 hour from now
         if not start_time:
             start_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        else:
+            # If start_time is provided, ensure it's in UTC
+            # First parse the local time
+            local_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            
+            # If the year is not set (or is old), use current year
+            current_year = datetime.now(timezone.utc).year
+            if local_dt.year < current_year:
+                local_dt = local_dt.replace(year=current_year)
+            
+            # Convert to UTC by adding the offset (since local time is ahead of UTC)
+            if session.context.timezone_offset is not None:
+                utc_dt = local_dt + timedelta(minutes=session.context.timezone_offset)
+                start_time = utc_dt.isoformat()
             
         response = await api_client.make_request(
             "POST",
@@ -38,6 +81,11 @@ async def create_reminder_tool(
             },
             headers={"Authorization": f"Bearer {session.context.token}"}
         )
+        
+        # Format the response with local time if timezone offset is available
+        if session.context.timezone_offset is not None:
+            local_time = format_local_time(response['start_time'], session.context.timezone_offset)
+            return f"Successfully created reminder: {title} at {local_time}"
         return f"Successfully created reminder: {title}"
     except Exception as e:
         logger.error(f"Error creating reminder: {str(e)}")
@@ -63,7 +111,12 @@ async def list_room_reminders_tool(
         
         result = "Room reminders:\n"
         for reminder in reminders:
-            result += f"- {reminder['title']}: {reminder['next_trigger_time']}\n"
+            # Format time in local timezone if offset is available
+            if session.context.timezone_offset is not None:
+                time_str = format_local_time(reminder['next_trigger_time'], session.context.timezone_offset)
+            else:
+                time_str = reminder['next_trigger_time']
+            result += f"- {reminder['title']}: {time_str}\n"
         return result
     except Exception as e:
         logger.error(f"Error listing reminders: {str(e)}")
@@ -89,7 +142,13 @@ async def update_reminder_tool(
         if description is not None:
             update_data["description"] = description
         if start_time is not None:
-            update_data["start_time"] = start_time
+            # Convert local time to UTC before updating
+            local_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            if session.context.timezone_offset is not None:
+                utc_dt = local_dt - timedelta(minutes=session.context.timezone_offset)
+                update_data["start_time"] = utc_dt.isoformat()
+            else:
+                update_data["start_time"] = start_time
         if rrule is not None:
             update_data["rrule"] = rrule
             
@@ -99,6 +158,11 @@ async def update_reminder_tool(
             data=update_data,
             headers={"Authorization": f"Bearer {session.context.token}"}
         )
+        
+        # Format the response with local time if timezone offset is available
+        if session.context.timezone_offset is not None and 'start_time' in response:
+            local_time = format_local_time(response['start_time'], session.context.timezone_offset)
+            return f"Successfully updated reminder: {response['title']} at {local_time}"
         return f"Successfully updated reminder: {response['title']}"
     except Exception as e:
         logger.error(f"Error updating reminder: {str(e)}")

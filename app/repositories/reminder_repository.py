@@ -59,6 +59,10 @@ class ReminderRepository:
         )
         
         try:
+            # Ensure start_time is in UTC
+            if obj_in.start_time.tzinfo is None:
+                obj_in.start_time = obj_in.start_time.replace(tzinfo=timezone.utc)
+            
             # Calculate next trigger time
             next_trigger_time = obj_in.start_time
             if obj_in.rrule:

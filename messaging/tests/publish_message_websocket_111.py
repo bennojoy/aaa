@@ -4,6 +4,7 @@ import time
 import logging
 import httpx
 from asyncio_mqtt import Client, MqttError
+from datetime import datetime
 
 # === Logging Setup ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
@@ -191,7 +192,8 @@ async def mqtt_main():
                 "room_type": "user",
                 "content": message,
                 "trace_id": f"trace-{int(time.time())}",
-                "sender_id": user_id
+                "sender_id": user_id,
+                "client_timestamp": datetime.now().isoformat()
             }
             
             await client.publish(TOPIC_PUB, json.dumps(message_payload), qos=1)

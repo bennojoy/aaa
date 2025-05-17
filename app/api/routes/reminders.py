@@ -56,15 +56,14 @@ async def create_reminder(
         HTTPException: If reminder creation fails
     """
     trace_id = get_trace_id()
-    logger.info(
-        "API: Creating new reminder",
-        extra={
-            "event": "api_reminder_create",
-            "room_id": str(reminder_in.room_id),
-            "user_id": str(current_user.id),
-            "trace_id": trace_id
-        }
-    )
+    _log("info", trace_id, "Creating new reminder", 
+         request={
+             "room_id": str(reminder_in.room_id),
+             "user_id": str(current_user.id),
+             "title": reminder_in.title,
+             "start_time": reminder_in.start_time.isoformat() if reminder_in.start_time else None,
+             "rrule": reminder_in.rrule
+         })
     
     try:
         reminder_repo = ReminderRepository(db)
@@ -72,25 +71,21 @@ async def create_reminder(
             obj_in=reminder_in,
             trace_id=trace_id
         )
-        logger.info(
-            "API: Successfully created reminder",
-            extra={
-                "event": "api_reminder_create_success",
-                "reminder_id": str(reminder.id),
-                "trace_id": trace_id
-            }
-        )
+        _log("info", trace_id, "Successfully created reminder",
+             response={
+                 "reminder_id": str(reminder.id),
+                 "title": reminder.title,
+                 "start_time": reminder.start_time.isoformat(),
+                 "next_trigger_time": reminder.next_trigger_time.isoformat() if reminder.next_trigger_time else None
+             })
         return reminder
     except Exception as e:
-        logger.error(
-            "API: Failed to create reminder",
-            extra={
-                "event": "api_reminder_create_failed",
-                "error": str(e),
-                "room_id": str(reminder_in.room_id),
-                "trace_id": trace_id
-            }
-        )
+        _log("error", trace_id, "Failed to create reminder",
+             error=str(e),
+             request={
+                 "room_id": str(reminder_in.room_id),
+                 "user_id": str(current_user.id)
+             })
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create reminder"
@@ -117,14 +112,11 @@ async def get_reminder(
         HTTPException: If reminder not found
     """
     trace_id = get_trace_id()
-    logger.debug(
-        "API: Fetching reminder",
-        extra={
-            "event": "api_reminder_get",
-            "reminder_id": str(reminder_id),
-            "trace_id": trace_id
-        }
-    )
+    _log("debug", trace_id, "Fetching reminder",
+         request={
+             "reminder_id": str(reminder_id),
+             "user_id": str(current_user.id)
+         })
     
     reminder_repo = ReminderRepository(db)
     reminder = await reminder_repo.get_by_id(
@@ -133,20 +125,23 @@ async def get_reminder(
     )
     
     if not reminder:
-        logger.error(
-            "API: Reminder not found",
-            extra={
-                "event": "api_reminder_get_failed",
-                "reason": "not_found",
-                "reminder_id": str(reminder_id),
-                "trace_id": trace_id
-            }
-        )
+        _log("error", trace_id, "Reminder not found",
+             request={
+                 "reminder_id": str(reminder_id),
+                 "user_id": str(current_user.id)
+             })
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Reminder not found"
         )
     
+    _log("debug", trace_id, "Successfully fetched reminder",
+         response={
+             "reminder_id": str(reminder.id),
+             "title": reminder.title,
+             "start_time": reminder.start_time.isoformat(),
+             "next_trigger_time": reminder.next_trigger_time.isoformat() if reminder.next_trigger_time else None
+         })
     return reminder
 
 @router.get("/room/{room_id}", response_model=List[Reminder])
@@ -171,16 +166,13 @@ async def get_room_reminders(
         List[Reminder]: List of reminders in the room
     """
     trace_id = get_trace_id()
-    logger.debug(
-        "API: Fetching room reminders",
-        extra={
-            "event": "api_room_reminders_get",
-            "room_id": str(room_id),
-            "skip": skip,
-            "limit": limit,
-            "trace_id": trace_id
-        }
-    )
+    _log("debug", trace_id, "Fetching room reminders",
+         request={
+             "room_id": str(room_id),
+             "user_id": str(current_user.id),
+             "skip": skip,
+             "limit": limit
+         })
     
     reminder_repo = ReminderRepository(db)
     reminders = await reminder_repo.get_by_room(
@@ -190,6 +182,19 @@ async def get_room_reminders(
         limit=limit
     )
     
+    _log("debug", trace_id, "Successfully fetched room reminders",
+         response={
+             "room_id": str(room_id),
+             "count": len(reminders),
+             "reminders": [
+                 {
+                     "id": str(r.id),
+                     "title": r.title,
+                     "start_time": r.start_time.isoformat(),
+                     "next_trigger_time": r.next_trigger_time.isoformat() if r.next_trigger_time else None
+                 } for r in reminders
+             ]
+         })
     return reminders
 
 @router.get("/user/created", response_model=List[Reminder])
@@ -212,16 +217,12 @@ async def get_user_created_reminders(
         List[Reminder]: List of reminders created by the user
     """
     trace_id = get_trace_id()
-    logger.debug(
-        "API: Fetching user created reminders",
-        extra={
-            "event": "api_user_reminders_get",
-            "user_id": str(current_user.id),
-            "skip": skip,
-            "limit": limit,
-            "trace_id": trace_id
-        }
-    )
+    _log("debug", trace_id, "Fetching user created reminders",
+         request={
+             "user_id": str(current_user.id),
+             "skip": skip,
+             "limit": limit
+         })
     
     reminder_repo = ReminderRepository(db)
     reminders = await reminder_repo.get_by_creator(
@@ -231,6 +232,19 @@ async def get_user_created_reminders(
         limit=limit
     )
     
+    _log("debug", trace_id, "Successfully fetched user created reminders",
+         response={
+             "user_id": str(current_user.id),
+             "count": len(reminders),
+             "reminders": [
+                 {
+                     "id": str(r.id),
+                     "title": r.title,
+                     "start_time": r.start_time.isoformat(),
+                     "next_trigger_time": r.next_trigger_time.isoformat() if r.next_trigger_time else None
+                 } for r in reminders
+             ]
+         })
     return reminders
 
 @router.put("/{reminder_id}", response_model=Reminder)
@@ -256,14 +270,12 @@ async def update_reminder(
         HTTPException: If reminder not found or update fails
     """
     trace_id = get_trace_id()
-    logger.info(
-        "API: Updating reminder",
-        extra={
-            "event": "api_reminder_update",
-            "reminder_id": str(reminder_id),
-            "trace_id": trace_id
-        }
-    )
+    _log("info", trace_id, "Updating reminder",
+         request={
+             "reminder_id": str(reminder_id),
+             "user_id": str(current_user.id),
+             "updates": reminder_in.dict(exclude_unset=True)
+         })
     
     reminder_repo = ReminderRepository(db)
     reminder = await reminder_repo.get_by_id(
@@ -272,15 +284,11 @@ async def update_reminder(
     )
     
     if not reminder:
-        logger.error(
-            "API: Reminder not found",
-            extra={
-                "event": "api_reminder_update_failed",
-                "reason": "not_found",
-                "reminder_id": str(reminder_id),
-                "trace_id": trace_id
-            }
-        )
+        _log("error", trace_id, "Reminder not found",
+             request={
+                 "reminder_id": str(reminder_id),
+                 "user_id": str(current_user.id)
+             })
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Reminder not found"
@@ -292,26 +300,21 @@ async def update_reminder(
             obj_in=reminder_in,
             trace_id=trace_id
         )
-        logger.info(
-            "API: Successfully updated reminder",
-            extra={
-                "event": "api_reminder_update_success",
-                "reminder_id": str(reminder_id),
-                "trace_id": trace_id
-            }
-        )
+        _log("info", trace_id, "Successfully updated reminder",
+             response={
+                 "reminder_id": str(updated_reminder.id),
+                 "title": updated_reminder.title,
+                 "start_time": updated_reminder.start_time.isoformat(),
+                 "next_trigger_time": updated_reminder.next_trigger_time.isoformat() if updated_reminder.next_trigger_time else None
+             })
         return updated_reminder
     except Exception as e:
-        logger.error(
-            "API: Failed to update reminder",
-            extra={
-                "event": "api_reminder_update_failed",
-                "reason": "update_error",
-                "reminder_id": str(reminder_id),
-                "error": str(e),
-                "trace_id": trace_id
-            }
-        )
+        _log("error", trace_id, "Failed to update reminder",
+             error=str(e),
+             request={
+                 "reminder_id": str(reminder_id),
+                 "user_id": str(current_user.id)
+             })
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update reminder"
@@ -338,14 +341,11 @@ async def delete_reminder(
         HTTPException: If reminder not found or deletion fails
     """
     trace_id = get_trace_id()
-    logger.info(
-        "API: Deleting reminder",
-        extra={
-            "event": "api_reminder_delete",
-            "reminder_id": str(reminder_id),
-            "trace_id": trace_id
-        }
-    )
+    _log("info", trace_id, "Deleting reminder",
+         request={
+             "reminder_id": str(reminder_id),
+             "user_id": str(current_user.id)
+         })
     
     reminder_repo = ReminderRepository(db)
     reminder = await reminder_repo.get_by_id(
@@ -354,15 +354,11 @@ async def delete_reminder(
     )
     
     if not reminder:
-        logger.error(
-            "API: Reminder not found",
-            extra={
-                "event": "api_reminder_delete_failed",
-                "reason": "not_found",
-                "reminder_id": str(reminder_id),
-                "trace_id": trace_id
-            }
-        )
+        _log("error", trace_id, "Reminder not found",
+             request={
+                 "reminder_id": str(reminder_id),
+                 "user_id": str(current_user.id)
+             })
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Reminder not found"
@@ -373,26 +369,21 @@ async def delete_reminder(
             reminder_id=reminder_id,
             trace_id=trace_id
         )
-        logger.info(
-            "API: Successfully deleted reminder",
-            extra={
-                "event": "api_reminder_delete_success",
-                "reminder_id": str(reminder_id),
-                "trace_id": trace_id
-            }
-        )
+        _log("info", trace_id, "Successfully deleted reminder",
+             response={
+                 "reminder_id": str(deleted_reminder.id),
+                 "title": deleted_reminder.title,
+                 "start_time": deleted_reminder.start_time.isoformat(),
+                 "next_trigger_time": deleted_reminder.next_trigger_time.isoformat() if deleted_reminder.next_trigger_time else None
+             })
         return deleted_reminder
     except Exception as e:
-        logger.error(
-            "API: Failed to delete reminder",
-            extra={
-                "event": "api_reminder_delete_failed",
-                "reason": "delete_error",
-                "reminder_id": str(reminder_id),
-                "error": str(e),
-                "trace_id": trace_id
-            }
-        )
+        _log("error", trace_id, "Failed to delete reminder",
+             error=str(e),
+             request={
+                 "reminder_id": str(reminder_id),
+                 "user_id": str(current_user.id)
+             })
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete reminder"
