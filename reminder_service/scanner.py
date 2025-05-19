@@ -154,7 +154,7 @@ class ReminderScanner:
                             # Create reminder message using Pydantic model
                             message = ReminderMessage(
                                 room_id=reminder.room_id,
-                                sender_id=reminder.created_by_user_id,  # Use creator as sender
+                                sender_id=settings.SYSTEM_USER_UUID,  # Use system user instead of creator
                                 content=content,
                                 trace_id=trace_id,
                                 timestamp=now,

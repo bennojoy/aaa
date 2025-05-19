@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 import logging
 import json
+from app.core.config import settings as app_settings
 
 class Settings(BaseSettings):
     # Database settings
@@ -16,6 +17,9 @@ class Settings(BaseSettings):
     # Scanner settings
     SCAN_INTERVAL_SECONDS: int = 60
     BATCH_SIZE: int = 100
+    
+    # System settings
+    SYSTEM_USER_UUID: str = app_settings.SYSTEM_USER_UUID
     
     # Logging
     LOG_LEVEL: str = "INFO"

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     MAX_USERS_PER_ROOM: int = 5  # Maximum number of users allowed in a room
     MAX_ROOMS_PER_USER: int = 10   # Maximum number of rooms a user can be in
 
+    # System settings
+    SYSTEM_USER_UUID: str = "2d90c5f0-f3ca-4fb4-a726-ac90316635d6"
+
     # Database settings
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./chat_platform.db")
     DB_ECHO: bool = True
