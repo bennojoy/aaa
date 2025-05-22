@@ -31,16 +31,46 @@ pip install -r requirements.txt
 
 ## Starting Services
 
-### 1. Start Messaging Services (Kafka, MQTT, Webhook)
+### Complete Startup Sequence
 
-You can start the messaging services in two ways:
+To start the entire platform with test data, follow these steps in order:
 
-#### Option 1: Using the provided script (Recommended)
+1. Start the messaging services:
 ```bash
 ./run_docker.sh
 ```
 
-#### Option 2: Manual start
+2. Start the FastAPI server:
+```bash
+./run_app.sh
+```
+
+3. Initialize test data (in a new terminal):
+```bash
+./init_test_data.sh
+```
+
+This will:
+- Create a system user
+- Create two test users
+- Create a test room with both users as participants
+
+Test user credentials:
+- User 1: +15509990001 (pwuser1new2024)
+- User 2: +15509990002 (pwuser2new2024)
+
+### Individual Service Startup
+
+#### 1. Start Messaging Services (Kafka, MQTT, Webhook)
+
+You can start the messaging services in two ways:
+
+##### Option 1: Using the provided script (Recommended)
+```bash
+./run_docker.sh
+```
+
+##### Option 2: Manual start
 ```bash
 cd messaging/services
 docker compose up -d
@@ -53,16 +83,16 @@ This will start:
 - Webhook Server (port 4000)
 - Kafka-to-MQTT Bridge
 
-### 2. Start FastAPI Server
+#### 2. Start FastAPI Server
 
 You can start the FastAPI server in two ways:
 
-#### Option 1: Using the provided script (Recommended)
+##### Option 1: Using the provided script (Recommended)
 ```bash
 ./run_app.sh
 ```
 
-#### Option 2: Manual start
+##### Option 2: Manual start
 ```bash
 source venv/bin/activate  # On Unix/macOS
 # or

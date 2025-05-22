@@ -4,7 +4,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from app.models.user import User, UserType
-from app.models.reminder import Reminder
 from app.core.config import settings
 from app.core.security import hash_password
 
