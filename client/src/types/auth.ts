@@ -23,5 +23,7 @@ export interface SignupData {
 
 export interface AuthResponse {
   access_token: string;
-  user: User;
+  token_type: string;
+  trace_id: string;
+  user_id: string;
 } 

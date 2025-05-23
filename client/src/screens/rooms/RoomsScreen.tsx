@@ -1,11 +1,16 @@
 import React, { useEffect } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl } from 'react-native';
+import { View, StyleSheet, FlatList, RefreshControl, TouchableOpacity } from 'react-native';
 import { Text, Card, Button, SearchBar } from 'react-native-elements';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootState } from '../../store';
 import { searchRoomsRequest, clearRoomError } from '../../store/roomSlice';
 import { logger } from '../../utils/logger';
 import { Room } from '../../types/room';
+import { RootStackParamList } from '../../navigation/types';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Rooms'>;
 
 /**
  * RoomsScreen Component
@@ -13,6 +18,7 @@ import { Room } from '../../types/room';
  */
 export const RoomsScreen = () => {
   const dispatch = useDispatch();
+  const navigation = useNavigation<NavigationProp>();
   const { rooms, loading, error } = useSelector((state: RootState) => state.room);
   const [searchQuery, setSearchQuery] = React.useState('');
 
@@ -45,26 +51,41 @@ export const RoomsScreen = () => {
   };
 
   /**
+   * Handles room selection
+   * @param room - The selected room
+   */
+  const handleRoomSelect = (room: Room) => {
+    logger.info('Room selected', { roomId: room.id, roomType: 'assistant' }, 'room');
+    navigation.navigate('Chat', {
+      roomId: room.id,
+      roomType: 'assistant',
+      roomName: room.name
+    });
+  };
+
+  /**
    * Renders a single room card
    * @param param0 - The room item to render
    */
   const renderRoom = ({ item: room }: { item: Room }) => (
-    <Card containerStyle={styles.card}>
-      <Card.Title>{room.name}</Card.Title>
-      <Text style={styles.description}>{room.description}</Text>
-      <View style={styles.cardFooter}>
-        <Text style={styles.timestamp}>
-          Created: {new Date(room.created_at).toLocaleDateString()}
-        </Text>
+    <TouchableOpacity onPress={() => handleRoomSelect(room)}>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>{room.name}</Text>
+        <Text style={styles.description}>{room.description}</Text>
+        <View style={styles.cardFooter}>
+          <Text style={styles.timestamp}>
+            Created: {new Date(room.created_at).toLocaleDateString()}
+          </Text>
+        </View>
       </View>
-    </Card>
+    </TouchableOpacity>
   );
 
   return (
     <View style={styles.container}>
       <SearchBar
         placeholder="Search rooms..."
-        onChangeText={handleSearch}
+        onChangeText={(text: string) => handleSearch(text)}
         value={searchQuery}
         platform="default"
         containerStyle={styles.searchBar}
@@ -112,8 +133,20 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   card: {
+    backgroundColor: '#fff',
     borderRadius: 8,
     marginBottom: 10,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 8,
   },
   description: {
     marginBottom: 10,

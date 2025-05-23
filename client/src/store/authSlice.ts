@@ -24,7 +24,7 @@ const authSlice = createSlice({
       state.loading = true;
       state.error = null;
     },
-    loginSuccess: (state, action: PayloadAction<AuthResponse>) => {
+    loginSuccess: (state, action: PayloadAction<{ user: User; access_token: string }>) => {
       state.loading = false;
       state.user = action.payload.user;
       state.token = action.payload.access_token;
@@ -38,7 +38,7 @@ const authSlice = createSlice({
       state.loading = true;
       state.error = null;
     },
-    signupSuccess: (state, action: PayloadAction<AuthResponse>) => {
+    signupSuccess: (state, action: PayloadAction<{ user: User; access_token: string }>) => {
       state.loading = false;
       state.user = action.payload.user;
       state.token = action.payload.access_token;

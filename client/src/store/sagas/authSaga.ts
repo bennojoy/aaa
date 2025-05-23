@@ -1,4 +1,4 @@
-import { takeLatest, call, put } from 'redux-saga/effects';
+import { takeLatest, call, put, select, SelectEffect } from 'redux-saga/effects';
 import {
   loginRequest,
   loginSuccess,
@@ -12,14 +12,23 @@ import { storage } from '../../utils/storage';
 import { logger } from '../../utils/logger';
 import { AxiosResponse } from 'axios';
 import { LoginCredentials, SignupData, AuthResponse, User } from '../../types/auth';
+import { getTraceId } from '../../utils/trace';
+import { initializeMqtt } from './chatSaga';
+
+// Selector to get auth state
+const getAuthState = (state: any) => state.auth;
 
 /**
  * Handle user login request
  * @param action - The login request action containing user credentials
  */
-function* handleLogin(action: ReturnType<typeof loginRequest>) {
+function* handleLogin(action: ReturnType<typeof loginRequest>): Generator<any, void, any> {
+  const { identifier, password } = action.payload;
+  const traceId = getTraceId();
+
+  logger.info('Login attempt', { identifier, traceId }, 'auth');
+
   try {
-    const { identifier, password } = action.payload as LoginCredentials;
     const response: AxiosResponse<AuthResponse> = yield call(
       apiClient.post,
       '/api/v1/auth/signin',
@@ -29,17 +38,52 @@ function* handleLogin(action: ReturnType<typeof loginRequest>) {
       }
     );
 
-    const { access_token, user } = response.data;
+    const { access_token, user_id } = response.data;
     
     if (!access_token) {
       throw new Error('No access token received');
     }
 
+    if (!user_id) {
+      throw new Error('No user ID received');
+    }
+
+    // Create a minimal user object with the ID
+    const user: User = {
+      id: user_id,
+      phone_number: identifier,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Store token and user data
     yield call([storage, 'setToken'], access_token);
     yield call([storage, 'setUserData'], user);
-    yield put(loginSuccess({ user, access_token }));
     
-    logger.info('Login successful', { identifier }, 'auth');
+    logger.info('Login successful', { identifier, userId: user_id }, 'auth');
+
+    // First dispatch login success
+    yield put(loginSuccess({ user, access_token }));
+
+    // Wait for auth state to be updated
+    const authState = yield select(getAuthState);
+    if (!authState.user || !authState.token) {
+      throw new Error('Auth state not properly updated');
+    }
+
+    // Initialize MQTT connection after login success
+    logger.info('Dispatching MQTT initialization', { 
+      userId: user_id,
+      hasToken: !!access_token,
+      traceId
+    }, 'auth');
+    
+    yield put(initializeMqtt({ token: access_token, userId: user_id }));
+    logger.info('MQTT initialization dispatched', { 
+      userId: user_id,
+      traceId
+    }, 'auth');
+
   } catch (error: any) {
     // Handle validation errors from FastAPI
     if (error.response?.data?.detail) {
@@ -56,7 +100,11 @@ function* handleLogin(action: ReturnType<typeof loginRequest>) {
     } else {
       // Handle other types of errors
       const errorMessage = error.message || 'Login failed';
-      logger.error('Login failed', { error }, 'auth');
+      logger.error('Login failed', { 
+        error: error.message,
+        status: error.response?.status,
+        traceId 
+      }, 'auth');
       yield put(loginFailure(errorMessage));
     }
   }
@@ -66,12 +114,13 @@ function* handleLogin(action: ReturnType<typeof loginRequest>) {
  * Handle user signup request
  * @param action - The signup request action containing user data
  */
-function* handleSignup(action: ReturnType<typeof signupRequest>) {
-  logger.debug('Starting signup process', { payload: action.payload }, 'auth');
+function* handleSignup(action: ReturnType<typeof signupRequest>): Generator<any, void, any> {
+  const { phone_number, password } = action.payload;
+  const traceId = getTraceId();
+
+  logger.info('Signup attempt', { phone_number, traceId }, 'auth');
+
   try {
-    const { phone_number, password } = action.payload as SignupData;
-    logger.debug('Making signup API call', { phone_number }, 'auth');
-    
     const response: AxiosResponse<AuthResponse> = yield call(
       apiClient.post,
       '/api/v1/auth/signup',
@@ -81,16 +130,42 @@ function* handleSignup(action: ReturnType<typeof signupRequest>) {
       }
     );
 
-    logger.debug('Received signup response', { status: response.status, data: response.data }, 'auth');
+    const { access_token, user_id } = response.data;
 
-    // Check if we have a valid response
-    if (!response.data) {
-      throw new Error('Invalid response from server');
+    if (!access_token) {
+      throw new Error('No access token received');
     }
 
-    // Success case - just show success message
-    yield put(signupSuccess(response.data));
-    logger.info('Signup successful', { phoneNumber: phone_number }, 'auth');
+    if (!user_id) {
+      throw new Error('No user ID received');
+    }
+
+    // Create a minimal user object with the ID
+    const user: User = {
+      id: user_id,
+      phone_number,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Store token and user data
+    yield call([storage, 'setToken'], access_token);
+    yield call([storage, 'setUserData'], user);
+
+    logger.info('Signup successful', { phone_number, userId: user_id }, 'auth');
+
+    // First dispatch signup success
+    yield put(signupSuccess({ user, access_token }));
+
+    // Wait for auth state to be updated
+    const authState = yield select(getAuthState);
+    if (!authState.user || !authState.token) {
+      throw new Error('Auth state not properly updated');
+    }
+
+    // Initialize MQTT connection after signup success
+    yield put(initializeMqtt({ token: access_token, userId: user_id }));
+
   } catch (error: any) {
     // Handle validation errors from FastAPI
     if (error.response?.data?.detail) {
@@ -107,7 +182,11 @@ function* handleSignup(action: ReturnType<typeof signupRequest>) {
     } else {
       // Handle other types of errors
       const errorMessage = error.message || 'Signup failed';
-      logger.error('Signup failed', { error }, 'auth');
+      logger.error('Signup failed', { 
+        error: error.message,
+        status: error.response?.status,
+        traceId 
+      }, 'auth');
       yield put(signupFailure(errorMessage));
     }
   }
@@ -116,7 +195,7 @@ function* handleSignup(action: ReturnType<typeof signupRequest>) {
 /**
  * Watch for auth-related actions and trigger appropriate sagas
  */
-export function* authSaga() {
+export function* authSaga(): Generator<any, void, any> {
   logger.debug('Starting auth sagas', null, 'auth');
   yield takeLatest(loginRequest.type, handleLogin);
   yield takeLatest(signupRequest.type, handleSignup);

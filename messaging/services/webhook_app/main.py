@@ -119,6 +119,8 @@ async def receive_webhook(req: Request):
                 "room_id": room_id,
                 "error": str(e)
             }))
+            return {"status": "nok"}
+        return {"status": "ok"}
 
     if room_type == "user" and not content.startswith("@aip"):
         topic = "messages.ToUser"
@@ -153,6 +155,8 @@ async def receive_webhook(req: Request):
                 "room_id": room_id,
                 "error": str(e)
             }))
+            return {"status": "nok"}
+        return {"status": "ok"}
     else:
         topic = "messages.Unknown"
         logging.error(json.dumps({
@@ -165,5 +169,5 @@ async def receive_webhook(req: Request):
             "target_topic": topic,
             "payload": payload
         }))
-    return {"status": "ok"}
+        return {"status": "nok"}
 

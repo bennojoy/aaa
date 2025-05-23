@@ -7,6 +7,7 @@ export type RootStackParamList = {
   Main: undefined;
   Chat: {
     roomId: string;
+    roomType: 'user' | 'assistant';
     roomName: string;
   };
   Profile: {

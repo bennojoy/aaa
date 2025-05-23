@@ -8,7 +8,7 @@ import { SignupScreen } from '../screens/auth/SignupScreen';
 import { RoomsScreen } from '../screens/rooms/RoomsScreen';
 import { RootStackParamList } from './types';
 import { MainNavigator } from './MainNavigator';
-import { ChatScreen } from '../screens/main/ChatScreen';
+import { ChatScreen } from '../screens/chat/ChatScreen';
 import { ProfileScreen } from '../screens/main/ProfileScreen';
 import { SettingsScreen } from '../screens/main/SettingsScreen';
 import { storage } from '../utils/storage';
@@ -73,7 +73,21 @@ export const AppNavigator = () => {
               }}
             />
             <Stack.Screen name="Main" component={MainNavigator} />
-            <Stack.Screen name="Chat" component={ChatScreen} />
+            <Stack.Screen 
+              name="Chat" 
+              component={ChatScreen}
+              options={({ route }) => ({
+                title: route.params.roomName,
+                headerShown: true,
+                headerBackTitle: 'Rooms',
+                headerBackVisible: true,
+                headerStyle: {
+                  backgroundColor: '#fff',
+                },
+                headerTintColor: '#000',
+                headerShadowVisible: false,
+              })}
+            />
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
           </>
