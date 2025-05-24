@@ -18,6 +18,7 @@ from app.core.security import create_access_token, decode_access_token
 from app.core.logging import logger
 from fastapi.security import OAuth2PasswordBearer
 import uuid
+import time
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -324,4 +325,54 @@ async def protected_route(token: str = Depends(oauth2_scheme)):
             "trace_id": trace_id
         }
     )
-    return {"message": "You are authenticated", "trace_id": trace_id} 
+    return {"message": "You are authenticated", "trace_id": trace_id}
+
+@router.get("/verify")
+async def verify_token(token: str = Depends(oauth2_scheme)):
+    """
+    Verify if a token is valid.
+    
+    Args:
+        token (str): JWT token from Authorization header.
+    
+    Returns:
+        dict: Success message and trace_id.
+    
+    Raises:
+        HTTPException: If token is invalid.
+    """
+    trace_id = get_trace_id()
+    payload = decode_access_token(token)
+    if not payload:
+        logger.warning(
+            "Invalid token provided",
+            extra={
+                "event": "auth_failed",
+                "reason": "invalid_token",
+                "trace_id": trace_id
+            }
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    
+    # Check if token is expired
+    exp = payload.get('exp')
+    if not exp or exp < time.time():
+        logger.warning(
+            "Token expired",
+            extra={
+                "event": "auth_failed",
+                "reason": "token_expired",
+                "trace_id": trace_id
+            }
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+    
+    logger.info(
+        "Token verified successfully",
+        extra={
+            "event": "token_verified",
+            "user_id": str(payload.get('sub')),
+            "trace_id": trace_id
+        }
+    )
+    return {"message": "Token is valid", "trace_id": trace_id} 

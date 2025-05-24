@@ -1,22 +1,17 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { Message, MessageStatus } from '../types/message';
 
 interface MQTTState {
-  connectionStatus: 'connecting' | 'connected' | 'disconnected';
-  messages: {
-    [roomId: string]: Message[];
-  };
+  connectionStatus: 'connected' | 'connecting' | 'disconnected' | 'error';
   currentUserId: string | null;
   currentToken: string | null;
-  error: string | null;
+  lastError: string | null;
 }
 
 const initialState: MQTTState = {
   connectionStatus: 'disconnected',
-  messages: {},
   currentUserId: null,
   currentToken: null,
-  error: null
+  lastError: null
 };
 
 const mqttSlice = createSlice({
@@ -27,11 +22,11 @@ const mqttSlice = createSlice({
       state.connectionStatus = 'connecting';
       state.currentToken = action.payload.token;
       state.currentUserId = action.payload.userId;
-      state.error = null;
+      state.lastError = null;
     },
     connected: (state) => {
       state.connectionStatus = 'connected';
-      state.error = null;
+      state.lastError = null;
     },
     disconnected: (state) => {
       state.connectionStatus = 'disconnected';
@@ -39,45 +34,25 @@ const mqttSlice = createSlice({
       state.currentUserId = null;
     },
     error: (state, action: PayloadAction<string>) => {
-      state.error = action.payload;
-      state.connectionStatus = 'disconnected';
+      state.connectionStatus = 'error';
+      state.lastError = action.payload;
     },
-    messageReceived: (state, action: PayloadAction<{ roomId: string; message: Message }>) => {
-      const { roomId, message } = action.payload;
-      if (!state.messages[roomId]) {
-        state.messages[roomId] = [];
-      }
-      state.messages[roomId].push(message);
+    messageReceived: (state, action: PayloadAction<{ roomId: string; message: any }>) => {
+      // No state changes needed for message received
     },
-    messageSent: (state, action: PayloadAction<{ roomId: string; messageId: string }>) => {
-      const { roomId, messageId } = action.payload;
-      const message = state.messages[roomId]?.find(m => m.id === messageId);
-      if (message) {
-        message.status = 'sent';
-      }
-    },
-    messageFailed: (state, action: PayloadAction<{ roomId: string; messageId: string }>) => {
-      const { roomId, messageId } = action.payload;
-      const message = state.messages[roomId]?.find(m => m.id === messageId);
-      if (message) {
-        message.status = 'failed';
-      }
-    },
-    clearMessages: (state, action: PayloadAction<string>) => {
-      delete state.messages[action.payload];
+    setUserId: (state, action: PayloadAction<string>) => {
+      state.currentUserId = action.payload;
     }
   }
 });
 
-export const {
-  connect,
-  connected,
-  disconnected,
-  error,
+export const { 
+  connect, 
+  connected, 
+  disconnected, 
+  error, 
   messageReceived,
-  messageSent,
-  messageFailed,
-  clearMessages
+  setUserId 
 } = mqttSlice.actions;
 
 export default mqttSlice.reducer; 

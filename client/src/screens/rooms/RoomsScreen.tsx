@@ -1,14 +1,18 @@
-import React, { useEffect } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, TouchableOpacity } from 'react-native';
-import { Text, Card, Button, SearchBar } from 'react-native-elements';
+import React, { useEffect, useCallback } from 'react';
+import { View, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput } from 'react-native';
+import { Text, Card, Button } from 'react-native-elements';
 import { useDispatch, useSelector } from 'react-redux';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootState } from '../../store';
 import { searchRoomsRequest, clearRoomError } from '../../store/roomSlice';
 import { logger } from '../../utils/logger';
 import { Room } from '../../types/room';
 import { RootStackParamList } from '../../navigation/types';
+import { logout } from '../../store/authSlice';
+import { storage } from '../../utils/storage';
+import { validateToken } from '../../utils/auth';
+import { connect } from '../../store/mqttSlice';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Rooms'>;
 
@@ -19,18 +23,73 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Rooms'>;
 export const RoomsScreen = () => {
   const dispatch = useDispatch();
   const navigation = useNavigation<NavigationProp>();
-  const { rooms, loading, error } = useSelector((state: RootState) => state.room);
+  const { rooms = [], loading, error } = useSelector((state: RootState) => state.rooms || { rooms: [], loading: false, error: null });
+  const { connectionStatus, currentUserId } = useSelector((state: RootState) => state.mqtt);
+  const { token } = useSelector((state: RootState) => state.auth);
   const [searchQuery, setSearchQuery] = React.useState('');
 
   useEffect(() => {
     logger.info('Rooms screen mounted', null, 'room');
-    // Load rooms when component mounts
-    dispatch(searchRoomsRequest({}));
+    validateTokenAndLoadRooms();
     return () => {
       logger.info('Rooms screen unmounted', null, 'room');
       dispatch(clearRoomError());
     };
   }, [dispatch]);
+
+  // Handle MQTT reconnection when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      const reconnectMQTT = async () => {
+        if (connectionStatus === 'disconnected' && currentUserId && token) {
+          logger.info('Attempting MQTT reconnection on screen focus', {
+            userId: currentUserId,
+            hasToken: !!token
+          }, 'mqtt');
+          
+          dispatch(connect({ token, userId: currentUserId }));
+        }
+      };
+
+      reconnectMQTT();
+    }, [connectionStatus, currentUserId, token, dispatch])
+  );
+
+  /**
+   * Validates token and loads rooms if valid
+   */
+  const validateTokenAndLoadRooms = async () => {
+    try {
+      const isValid = await validateToken();
+      if (!isValid) {
+        logger.error('Token validation failed', null, 'auth');
+        handleLogout();
+        return;
+      }
+
+      // Load rooms when component mounts
+      dispatch(searchRoomsRequest({}));
+    } catch (error) {
+      logger.error('Token validation failed', { error }, 'auth');
+      handleLogout();
+    }
+  };
+
+  /**
+   * Handles logout when token is invalid
+   */
+  const handleLogout = async () => {
+    try {
+      await storage.clear();
+      dispatch(logout());
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Login' }],
+      });
+    } catch (error) {
+      logger.error('Logout failed', { error }, 'auth');
+    }
+  };
 
   /**
    * Handles search input changes
@@ -83,13 +142,15 @@ export const RoomsScreen = () => {
 
   return (
     <View style={styles.container}>
-      <SearchBar
-        placeholder="Search rooms..."
-        onChangeText={(text: string) => handleSearch(text)}
-        value={searchQuery}
-        platform="default"
-        containerStyle={styles.searchBar}
-      />
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search rooms..."
+          value={searchQuery}
+          onChangeText={handleSearch}
+          placeholderTextColor="#999"
+        />
+      </View>
 
       {error && (
         <Text style={styles.error}>{error}</Text>
@@ -123,11 +184,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  searchBar: {
-    backgroundColor: 'transparent',
-    borderTopWidth: 0,
-    borderBottomWidth: 0,
-    paddingHorizontal: 10,
+  searchContainer: {
+    backgroundColor: '#fff',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  searchInput: {
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 16,
   },
   list: {
     padding: 10,

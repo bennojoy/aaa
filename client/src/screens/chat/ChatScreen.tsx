@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
-import { RouteProp, useRoute } from '@react-navigation/native';
+import { RouteProp, useRoute, useFocusEffect } from '@react-navigation/native';
 import { RootState } from '../../store';
 import { getRoomMessages, getConnectionStatus } from '../../store/selectors/chatSelectors';
 import { sendMessage, markMessagesAsRead } from '../../store/sagas/chatSaga';
@@ -10,6 +10,9 @@ import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { ConnectionStatus } from './ConnectionStatus';
 import { logger } from '../../utils/logger';
+import { connect } from '../../store/mqttSlice';
+import { mqttService } from '../../services/mqtt';
+import { getTraceId } from '../../utils/trace';
 
 type ChatScreenRouteProp = RouteProp<{
   Chat: {
@@ -27,6 +30,8 @@ export const ChatScreen: React.FC = () => {
   
   const messages = useSelector(getRoomMessages(roomId));
   const connectionStatus = useSelector(getConnectionStatus);
+  const { currentUserId } = useSelector((state: RootState) => state.mqtt);
+  const { token, user } = useSelector((state: RootState) => state.auth);
 
   useEffect(() => {
     logger.info('Chat screen mounted', { roomId, roomType, roomName }, 'chat');
@@ -43,6 +48,29 @@ export const ChatScreen: React.FC = () => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }
   }, [messages]);
+
+  // Handle MQTT reconnection when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      const traceId = getTraceId();
+      logger.info('Chat screen focused', { traceId }, 'chat');
+
+      // Check MQTT connection status
+      if (!mqttService.isConnected() && token && user?.id) {
+        logger.info('MQTT not connected, attempting to connect', {
+          userId: user.id,
+          hasToken: !!token,
+          traceId
+        }, 'chat');
+
+        dispatch(connect({ token, userId: user.id }));
+      }
+
+      return () => {
+        logger.info('Chat screen unfocused', { traceId }, 'chat');
+      };
+    }, [dispatch, token, user?.id])
+  );
 
   const handleSendMessage = (content: string) => {
     if (content.trim()) {

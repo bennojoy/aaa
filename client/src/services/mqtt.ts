@@ -2,56 +2,128 @@ import mqtt, { MqttClient, IClientOptions } from 'mqtt';
 import { logger } from '../utils/logger';
 import { getTraceId } from '../utils/trace';
 import { AppState, AppStateStatus } from 'react-native';
-import { store } from '../store';
-import { disconnected } from '../store/mqttSlice';
-import { setConnectionStatus } from '../store/chatSlice';
 import { MQTT_CONFIG } from '../config/mqtt';
 
 // Log MQTT library initialization
 console.log('MQTT library:', mqtt);
 console.log('MQTT library connect function:', mqtt.connect);
 
-class MQTTService {
+// Log MQTT service initialization
+console.log('Initializing MQTT service');
+
+export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
+type ConnectionStatusCallback = (status: ConnectionStatus) => void;
+type DisconnectedCallback = () => void;
+
+export interface MQTTService {
+  connect: (params: { token: string; userId: string }) => Promise<void>;
+  disconnect: () => Promise<void>;
+  publish: (topic: string, message: string) => Promise<void>;
+  subscribe: (topic: string) => Promise<void>;
+  unsubscribe: (topic: string) => Promise<void>;
+  isConnected: () => boolean;
+  getCurrentUserId: () => string | null;
+  setCallbacks: (callbacks: {
+    onConnectionStatusChange: (status: ConnectionStatus) => void;
+    onDisconnected: () => void;
+  }) => void;
+}
+
+class MQTTServiceImpl implements MQTTService {
   private client: MqttClient | null = null;
   private messageHandlers: ((topic: string, message: any) => void)[] = [];
   private appStateSubscription: any = null;
   private connectionPromise: Promise<void> | null = null;
   private currentUserId: string | null = null;
   private currentToken: string | null = null;
+  private retryCount = 0;
+  private maxRetries = 5;
+  private baseDelay = 1000; // 1 second
+  private maxDelay = 30000; // 30 seconds
+  private circuitBreakerOpen = false;
+  private circuitBreakerTimeout: NodeJS.Timeout | null = null;
+  private lastError: Error | null = null;
+  private connectionStatus: ConnectionStatus = 'disconnected';
+  private connectionCallbacks: {
+    onConnectionStatusChange: (status: ConnectionStatus) => void;
+    onDisconnected: () => void;
+  } | null = null;
 
   constructor() {
-    logger.info('MQTT Service initialized', {
-      config: MQTT_CONFIG
-    }, 'mqtt');
+    console.log('MQTT service constructor called');
     this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
+    
+    // Set up connection status callback
+    this.setCallbacks({
+      onConnectionStatusChange: (status) => {
+        const traceId = getTraceId();
+        logger.info('MQTT connection status changed', {
+          status,
+          traceId,
+          currentState: {
+            hasClient: !!this.client,
+            clientState: this.client?.connected ? 'connected' : 'disconnected',
+            currentUserId: this.currentUserId
+          }
+        }, 'mqtt');
+      },
+      onDisconnected: () => {
+        const traceId = getTraceId();
+        logger.info('MQTT disconnected', {
+          traceId,
+          currentState: {
+            hasClient: !!this.client,
+            clientState: this.client?.connected ? 'connected' : 'disconnected',
+            currentUserId: this.currentUserId
+          }
+        }, 'mqtt');
+      }
+    });
+  }
+
+  public setCallbacks(callbacks: {
+    onConnectionStatusChange: (status: ConnectionStatus) => void;
+    onDisconnected: () => void;
+  }) {
+    this.connectionCallbacks = callbacks;
+    // Immediately notify of current status
+    if (this.connectionStatus) {
+      this.connectionCallbacks.onConnectionStatusChange(this.connectionStatus);
+    }
   }
 
   private handleAppStateChange = async (nextAppState: AppStateStatus) => {
-    logger.info('App state changed', { 
-      nextAppState,
-      hasClient: !!this.client,
-      clientState: this.client?.connected ? 'connected' : 'disconnected',
-      userId: this.currentUserId
-    }, 'mqtt');
-
-    // Only disconnect if we're explicitly closing the app
-    if (nextAppState === 'inactive' && this.client) {
-      logger.info('App becoming inactive, disconnecting MQTT', {
-        clientState: this.client.connected ? 'connected' : 'disconnected',
-        userId: this.currentUserId
-      }, 'mqtt');
-      this.disconnect();
-    } else if (nextAppState === 'active' && this.currentUserId && this.currentToken && !this.client?.connected) {
-      logger.info('App becoming active, reconnecting MQTT if needed', {
+    console.log('App state changed:', nextAppState);
+    const traceId = getTraceId();
+    
+    if (nextAppState === 'active' && this.currentUserId && this.currentToken) {
+      logger.info('App became active, checking MQTT connection', {
         userId: this.currentUserId,
-        isConnected: this.client?.connected
+        hasToken: !!this.currentToken,
+        traceId,
+        currentState: {
+          hasClient: !!this.client,
+          clientState: this.client?.connected ? 'connected' : 'disconnected',
+          currentUserId: this.currentUserId,
+          retryCount: this.retryCount
+        }
       }, 'mqtt');
-      this.connect(this.currentToken, this.currentUserId).catch(err => {
-        logger.error('Failed to reconnect MQTT on app foreground', {
-          error: err,
-          userId: this.currentUserId
-        }, 'mqtt');
-      });
+      
+      this.connect({ token: this.currentToken, userId: this.currentUserId })
+        .catch(error => {
+          logger.error('Failed to reconnect MQTT after app became active', {
+            error,
+            userId: this.currentUserId,
+            traceId,
+            currentState: {
+              hasClient: !!this.client,
+              clientState: this.client?.connected ? 'connected' : 'disconnected',
+              currentUserId: this.currentUserId,
+              retryCount: this.retryCount
+            }
+          }, 'mqtt');
+        });
     }
   };
 
@@ -155,220 +227,192 @@ class MQTTService {
     });
   }
 
-  async connect(token: string, userId: string): Promise<void> {
-    // If there's an ongoing connection attempt, return that promise
-    if (this.connectionPromise) {
-      logger.info('Connection attempt already in progress', {
-        userId,
-        currentUserId: this.currentUserId,
-        hasToken: !!token,
-        tokenLength: token?.length,
-        tokenPreview: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
-        traceId: getTraceId()
-      }, 'mqtt');
-      return this.connectionPromise;
+  private calculateBackoffDelay(): number {
+    const delay = Math.min(this.baseDelay * Math.pow(2, this.retryCount), this.maxDelay);
+    return delay + Math.random() * 1000; // Add jitter
+  }
+
+  private openCircuitBreaker() {
+    this.circuitBreakerOpen = true;
+    logger.info('Circuit breaker opened', {
+      retryCount: this.retryCount,
+      lastError: this.lastError?.message
+    }, 'mqtt');
+
+    // Reset circuit breaker after 30 seconds
+    if (this.circuitBreakerTimeout) {
+      clearTimeout(this.circuitBreakerTimeout);
     }
+    this.circuitBreakerTimeout = setTimeout(() => {
+      this.circuitBreakerOpen = false;
+      this.retryCount = 0;
+      this.lastError = null;
+      logger.info('Circuit breaker reset', null, 'mqtt');
+    }, 30000);
+  }
+
+  async connect(params: { token: string; userId: string }): Promise<void> {
+    const { token, userId } = params;
+    const traceId = getTraceId();
+    const url = `${MQTT_CONFIG.protocol}://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}${MQTT_CONFIG.path}`;
 
     // If already connected with same user, resolve immediately
     if (this.client?.connected && this.currentUserId === userId) {
       logger.info('Already connected with same user', {
         userId,
-        hasToken: !!token,
-        tokenLength: token?.length,
-        tokenPreview: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
-        traceId: getTraceId()
+        retryCount: this.retryCount
       }, 'mqtt');
       return Promise.resolve();
     }
 
-    this.connectionPromise = new Promise(async (resolve, reject) => {
-      const traceId = getTraceId();
-      const url = `${MQTT_CONFIG.protocol}://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}${MQTT_CONFIG.path}`;
-      
-      // Set current token and user ID before connecting
-      this.currentToken = token;
-      this.currentUserId = userId;
-      
-      console.log('MQTT connect called with:', {
-        url,
+    // If there's an ongoing connection attempt, return that promise
+    if (this.connectionPromise) {
+      logger.info('Connection attempt already in progress', {
         userId,
-        hasToken: !!token,
-        tokenLength: token?.length,
-        tokenPreview: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
-        config: MQTT_CONFIG
-      });
-
-      logger.info('MQTT connect called', {
-        config: MQTT_CONFIG,
-        userId,
-        hasExistingClient: !!this.client,
-        existingClientState: this.client?.connected ? 'connected' : 'disconnected',
         currentUserId: this.currentUserId,
-        traceId,
-        url,
-        hasToken: !!token,
-        tokenLength: token?.length,
-        tokenPreview: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined
+        retryCount: this.retryCount
       }, 'mqtt');
-      
+      return this.connectionPromise;
+    }
+
+    this.connectionPromise = new Promise(async (resolve, reject) => {
       try {
+        // Disconnect existing client if any
         if (this.client) {
-          logger.info('Disconnecting existing client before reconnecting', {
-            userId,
-            currentUserId: this.currentUserId,
-            clientState: this.client.connected ? 'connected' : 'disconnected',
-            hasToken: !!token,
-            tokenLength: token?.length,
-            tokenPreview: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
-            traceId
-          }, 'mqtt');
-          this.disconnect();
+          await this.disconnect();
         }
-        
+
+        // Set current token and user ID
+        this.currentToken = token;
+        this.currentUserId = userId;
+
+        logger.info('Creating MQTT client', {
+          url,
+          userId,
+          traceId,
+          hasToken: !!token
+        }, 'mqtt');
+
         const options: IClientOptions = {
-          clientId: userId, // Use userId as clientId
+          clientId: userId,
           username: token,
           password: undefined,
-          clean: true, // Use clean session for better connection management
+          clean: true,
           path: MQTT_CONFIG.path,
           protocol: MQTT_CONFIG.protocol,
           keepalive: MQTT_CONFIG.keepalive,
-          connectTimeout: MQTT_CONFIG.connectTimeout
+          connectTimeout: MQTT_CONFIG.connectTimeout,
+          reconnectPeriod: 0, // Disable automatic reconnection
+          wsOptions: {
+            rejectUnauthorized: false // Allow self-signed certificates in development
+          }
         };
 
-        console.log('Creating MQTT client with options:', {
-          ...options,
-          password: '***',
-          username: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
-          hasToken: !!token,
-          tokenLength: token?.length
+        // Create MQTT client
+        this.client = mqtt.connect(url, options);
+
+        // Set up connection timeout
+        const connectionTimeout = setTimeout(() => {
+          if (!this.client?.connected) {
+            const error = new Error('MQTT connection timeout');
+            this.lastError = error;
+            this.retryCount++;
+            this.client?.end();
+            reject(error);
+          }
+        }, MQTT_CONFIG.connectTimeout);
+
+        // Set up event handlers
+        this.client.on('connect', () => {
+          clearTimeout(connectionTimeout);
+          this.retryCount = 0;
+          this.lastError = null;
+          this.connectionStatus = 'connected';
+          this.connectionCallbacks?.onConnectionStatusChange('connected');
+
+          logger.info('MQTT Connected', {
+            userId,
+            url,
+            traceId
+          }, 'mqtt');
+
+          resolve();
         });
 
-        logger.info('Creating MQTT client', { 
-          url, 
-          options: {
-            ...options,
-            password: '***',
-            username: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
-            hasToken: !!token,
-            tokenLength: token?.length
-          },
-          traceId
-        }, 'mqtt');
-        
-        // Create MQTT client
-        try {
-          console.log('Creating MQTT client instance');
-          this.client = mqtt.connect(url, options);
-          console.log('MQTT client instance created');
+        this.client.on('error', (error) => {
+          clearTimeout(connectionTimeout);
+          this.lastError = error;
+          this.retryCount++;
+          this.connectionStatus = 'error';
+          this.connectionCallbacks?.onConnectionStatusChange('error');
 
-          // Set up connection timeout
-          const connectionTimeout = setTimeout(() => {
-            if (!this.client?.connected) {
-              console.error('MQTT connection timeout');
-              logger.error('MQTT connection timeout', {
-                url,
-                userId,
-                traceId,
-                timeout: MQTT_CONFIG.connectTimeout
-              }, 'mqtt');
-              this.client?.end();
-              reject(new Error('MQTT connection timeout'));
-            }
-          }, MQTT_CONFIG.connectTimeout);
-
-          this.client.on('connect', () => {
-            console.log('MQTT client connected');
-            clearTimeout(connectionTimeout);
-            logger.info('MQTT Connected', { 
-              userId, 
-              url,
-              clientState: this.client?.connected ? 'connected' : 'disconnected',
-              traceId
-            }, 'mqtt');
-            resolve();
-          });
-
-          this.client.on('error', (error) => {
-            console.error('MQTT client error:', error);
-            clearTimeout(connectionTimeout);
-            logger.error('MQTT Error', { 
-              error,
-              url,
-              clientState: this.client?.connected ? 'connected' : 'disconnected',
-              userId: this.currentUserId,
-              traceId
-            }, 'mqtt');
-            store.dispatch(disconnected());
-            store.dispatch(setConnectionStatus('disconnected'));
-            reject(error);
-          });
-
-          this.client.on('close', () => {
-            clearTimeout(connectionTimeout);
-            logger.info('MQTT Connection Closed', { 
-              url,
-              clientState: this.client?.connected ? 'connected' : 'disconnected',
-              userId: this.currentUserId,
-              traceId
-            }, 'mqtt');
-            store.dispatch(disconnected());
-            store.dispatch(setConnectionStatus('disconnected'));
-          });
-
-          this.client.on('offline', () => {
-            clearTimeout(connectionTimeout);
-            logger.info('MQTT Client Offline', {
-              url,
-              clientState: this.client?.connected ? 'connected' : 'disconnected',
-              userId: this.currentUserId,
-              traceId
-            }, 'mqtt');
-            store.dispatch(disconnected());
-            store.dispatch(setConnectionStatus('disconnected'));
-          });
-
-          this.client.on('reconnect', () => {
-            logger.info('MQTT Client Reconnecting', {
-              url,
-              clientState: this.client?.connected ? 'connected' : 'disconnected',
-              userId: this.currentUserId,
-              traceId
-            }, 'mqtt');
-            store.dispatch(setConnectionStatus('connecting'));
-          });
-
-          this.client.on('end', () => {
-            clearTimeout(connectionTimeout);
-            logger.info('MQTT Client Ended', {
-              url,
-              clientState: this.client?.connected ? 'connected' : 'disconnected',
-              userId: this.currentUserId,
-              traceId
-            }, 'mqtt');
-            store.dispatch(disconnected());
-            store.dispatch(setConnectionStatus('disconnected'));
-          });
-
-        } catch (error) {
-          logger.error('Failed to create MQTT client', {
+          logger.error('MQTT Error', {
             error,
             url,
             userId,
             traceId
           }, 'mqtt');
-          throw error;
-        }
+
+          reject(error);
+        });
+
+        this.client.on('close', () => {
+          clearTimeout(connectionTimeout);
+          this.connectionStatus = 'disconnected';
+          this.connectionCallbacks?.onConnectionStatusChange('disconnected');
+          this.connectionCallbacks?.onDisconnected();
+
+          logger.info('MQTT Connection Closed', {
+            url,
+            userId,
+            traceId
+          }, 'mqtt');
+        });
+
+        // Set up message handler
+        this.client.on('message', (topic, message) => {
+          try {
+            const messageStr = message.toString();
+            const parsedMessage = JSON.parse(messageStr);
+            
+            logger.info('MQTT message received', {
+              topic,
+              message: parsedMessage,
+              traceId: getTraceId()
+            }, 'mqtt');
+            
+            this.messageHandlers.forEach(handler => {
+              try {
+                handler(topic, parsedMessage);
+              } catch (error) {
+                logger.error('Error in message handler', {
+                  error,
+                  topic,
+                  message: parsedMessage,
+                  traceId: getTraceId()
+                }, 'mqtt');
+              }
+            });
+          } catch (error) {
+            logger.error('Error parsing MQTT message', {
+              error,
+              topic,
+              message: message.toString(),
+              traceId: getTraceId()
+            }, 'mqtt');
+          }
+        });
 
       } catch (error) {
-        logger.error('MQTT Connection Error', { 
+        logger.error('MQTT Connection Error', {
           error,
           url,
-          userId: this.currentUserId,
+          userId,
           traceId
         }, 'mqtt');
-        store.dispatch(disconnected());
-        store.dispatch(setConnectionStatus('disconnected'));
+        
+        this.connectionStatus = 'disconnected';
+        this.connectionCallbacks?.onConnectionStatusChange('disconnected');
         reject(error);
       } finally {
         this.connectionPromise = null;
@@ -378,35 +422,30 @@ class MQTTService {
     return this.connectionPromise;
   }
 
-  subscribe(topic: string): Promise<void> {
+  async subscribe(topic: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('MQTT client not initialized');
+    }
     return new Promise((resolve, reject) => {
-      if (!this.client) {
-        reject(new Error('No MQTT client available'));
-        return;
-      }
-
-      const traceId = getTraceId();
-      logger.info('Subscribing to topic', { 
-        topic, 
-        traceId,
-        userId: this.currentUserId
-      }, 'mqtt');
-
-      this.client.subscribe(topic, (err) => {
-        if (err) {
-          logger.error('Failed to subscribe to topic', { 
-            error: err, 
-            topic, 
-            traceId,
-            userId: this.currentUserId
-          }, 'mqtt');
-          reject(err);
+      this.client?.subscribe(topic, (error) => {
+        if (error) {
+          reject(error);
         } else {
-          logger.info('Successfully subscribed to topic', { 
-            topic, 
-            traceId,
-            userId: this.currentUserId
-          }, 'mqtt');
+          resolve();
+        }
+      });
+    });
+  }
+
+  async unsubscribe(topic: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('MQTT client not initialized');
+    }
+    return new Promise((resolve, reject) => {
+      this.client?.unsubscribe(topic, (error) => {
+        if (error) {
+          reject(error);
+        } else {
           resolve();
         }
       });
@@ -467,16 +506,18 @@ class MQTTService {
     this.messageHandlers = this.messageHandlers.filter(h => h !== handler);
   }
 
-  disconnect() {
+  async disconnect(): Promise<void> {
     if (this.client) {
-      logger.info('Disconnecting MQTT client', { 
-        userId: this.currentUserId,
-        clientState: this.client.connected ? 'connected' : 'disconnected'
-      }, 'mqtt');
-      this.client.end();
-      this.client = null;
-      this.currentUserId = null;
-      this.currentToken = null;
+      return new Promise((resolve) => {
+        this.client?.end(false, () => {
+          this.client = null;
+          this.currentUserId = null;
+          this.currentToken = null;
+          this.connectionStatus = 'disconnected';
+          this.connectionCallbacks?.onConnectionStatusChange('disconnected');
+          resolve();
+        });
+      });
     }
   }
 
@@ -492,6 +533,18 @@ class MQTTService {
       this.appStateSubscription = null;
     }
   }
+
+  public isConnected(): boolean {
+    return this.client?.connected === true;
+  }
+
+  public getConnectionStatus(): ConnectionStatus {
+    return this.connectionStatus;
+  }
+
+  getCurrentUserId(): string | null {
+    return this.currentUserId;
+  }
 }
 
-export const mqttService = new MQTTService(); 
+export const mqttService = new MQTTServiceImpl(); 

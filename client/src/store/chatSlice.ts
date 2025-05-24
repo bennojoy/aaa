@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { ChatState, Message, MessageStatus } from '../types/message';
+import { logger } from '../utils/logger';
 
 const initialState: ChatState = {
   messages: {},
@@ -28,13 +29,34 @@ const chatSlice = createSlice({
         };
       }
 
+      const existingMessage = state.messages[roomId].items[message.id];
+      const isNewMessage = !existingMessage;
+      const statusChanged = existingMessage?.status !== message.status;
+
+      // Always update the message in the store
       state.messages[roomId].items[message.id] = message;
-      state.messages[roomId].total += 1;
       
-      // Increment unread count if message is not from current user
-      if (message.status === 'delivered') {
+      // Only increment total for new messages
+      if (isNewMessage) {
+        state.messages[roomId].total += 1;
+      }
+      
+      // Increment unread count if message is not from current user and status is delivered
+      if (message.status === 'delivered' && !existingMessage) {
         state.messages[roomId].unread += 1;
       }
+
+      // Debug log for message persistence
+      console.log('Message added/updated in store:', {
+        roomId,
+        messageId: message.id,
+        content: message.content,
+        status: message.status,
+        isNewMessage,
+        statusChanged,
+        totalMessages: state.messages[roomId].total,
+        currentState: state.messages[roomId]
+      });
     },
 
     updateMessageStatus: (state, action: PayloadAction<{ messageId: string; status: MessageStatus }>) => {
@@ -43,7 +65,18 @@ const chatSlice = createSlice({
       // Find the message in any room and update its status
       Object.values(state.messages).forEach(roomMessages => {
         if (roomMessages.items[messageId]) {
+          const oldStatus = roomMessages.items[messageId].status;
           roomMessages.items[messageId].status = status;
+          
+          // Debug log for status update
+          console.log('Message status updated:', {
+            messageId,
+            oldStatus,
+            newStatus: status,
+            roomId: Object.keys(state.messages).find(roomId => 
+              state.messages[roomId].items[messageId]
+            )
+          });
         }
       });
 

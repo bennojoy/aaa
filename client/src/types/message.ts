@@ -6,12 +6,12 @@ export type RoomType = 'user' | 'assistant';
 export interface BaseMessage {
   id: string;
   room_id: string;
-  room_type: RoomType;
+  room_type: 'user' | 'assistant';
   content: string;
-  trace_id: string;
   sender_id: string;
-  client_timestamp: string;
-  status: MessageStatus;
+  timestamp: string;
+  status: 'sending' | 'sent' | 'delivered' | 'error';
+  trace_id: string;
 }
 
 export interface UserMessage extends BaseMessage {
@@ -42,5 +42,8 @@ export interface ChatState {
 }
 
 // Utility functions
-export const generateMessageId = () => uuidv4();
-export const generateTraceId = (messageId: string) => `trace_${messageId}`; 
+export const generateMessageId = () => {
+  return crypto.randomUUID();
+};
+
+export const generateTraceId = (messageId: string) => `trace_${messageId}`;

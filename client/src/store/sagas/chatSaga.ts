@@ -1,5 +1,5 @@
 import { call, put, takeLatest, select } from 'redux-saga/effects';
-import { connect } from '../mqttSlice';
+import { connect, setUserId } from '../mqttSlice';
 import { 
   addMessage, 
   updateMessageStatus, 
@@ -38,7 +38,10 @@ function* handleInitializeMqtt(action: ReturnType<typeof initializeMqtt>): Gener
   }, 'chat');
 
   try {
-    // Dispatch connect action which will be handled by middleware
+    // First set the user ID in the MQTT state
+    yield put(setUserId(userId));
+    
+    // Then dispatch connect action which will be handled by middleware
     logger.info('Dispatching MQTT connect action', { userId, traceId }, 'chat');
     yield put(connect({ token, userId }));
     logger.info('MQTT connection initiated', { userId, traceId }, 'chat');
