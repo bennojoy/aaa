@@ -10,7 +10,8 @@ export interface BaseMessage {
   content: string;
   sender_id: string;
   timestamp: string;
-  status: 'sending' | 'sent' | 'delivered' | 'error';
+  client_timestamp: string;
+  status: MessageStatus;
   trace_id: string;
 }
 
@@ -20,13 +21,15 @@ export interface UserMessage extends BaseMessage {
 
 export interface AssistantMessage extends BaseMessage {
   room_type: 'assistant';
-  assistant_name: string;
+  assistant_name?: string;
 }
 
 export type Message = UserMessage | AssistantMessage;
 
 export interface RoomMessages {
-  items: { [messageId: string]: Message };
+  items: {
+    [messageId: string]: Message;
+  };
   total: number;
   unread: number;
 }

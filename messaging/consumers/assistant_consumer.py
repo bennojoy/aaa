@@ -2,9 +2,10 @@ import json
 import logging
 import asyncio
 import httpx
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timezone, timedelta
 from .base_consumer import BaseConsumer
-from ..config import TOPICS, CONSUMER_GROUPS
+from ..config import TOPICS, CONSUMER_GROUPS, SYSTEM_USER_UUID
 from messaging.ai_agents.runner import run_assistant_agent
 from messaging.ai_agents.agent_context import UserContext
 
@@ -133,8 +134,33 @@ class AssistantConsumer(BaseConsumer):
 
         # Send AI response to all participants
         response_payload = payload.copy()
+        logging.info(json.dumps({
+            "event": "message_id_before_change",
+            "trace_id": trace_id,
+            "original_message_id": payload.get("id"),
+            "payload": payload
+        }))
+
+        # Calculate timestamp relative to client timezone
+        current_time = datetime.now(timezone.utc)
+        if timezone_offset is not None:
+            # Convert to client's timezone using the offset
+            current_time = current_time + timedelta(minutes=timezone_offset)
+        
         response_payload["content"] = ai_response
-        response_payload["sender_id"] = "system"
+        response_payload["sender_id"] = SYSTEM_USER_UUID
+        response_payload.pop("id", None)  # Remove the original message ID
+        response_payload["id"] = str(uuid.uuid4())  # Generate new unique ID
+        response_payload["timestamp"] = current_time.isoformat()
+        response_payload["status"] = "delivered"  # Set initial status for response message
+
+        logging.info(json.dumps({
+            "event": "message_id_after_change",
+            "trace_id": trace_id,
+            "new_message_id": response_payload["id"],
+            "payload": response_payload,
+            "timestamp": response_payload["timestamp"]
+        }))
         
         logging.info(json.dumps({
             "event": "sending_ai_response",
@@ -144,7 +170,7 @@ class AssistantConsumer(BaseConsumer):
             "response": ai_response
         }))
         
-        await self.send_to_recipients(response_payload, recipients, "system", visibility)
+        await self.send_to_recipients(response_payload, recipients, SYSTEM_USER_UUID, visibility)
 
 async def main():
     consumer = AssistantConsumer()
