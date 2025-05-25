@@ -8,6 +8,8 @@ export interface Room {
   name: string;
   /** Description of the room */
   description: string;
+  /** Type of the room */
+  type: 'user' | 'assistant';
   /** ISO timestamp when the room was created */
   created_at: string;
   /** ISO timestamp when the room was last updated */

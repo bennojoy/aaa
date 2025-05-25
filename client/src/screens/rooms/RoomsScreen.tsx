@@ -158,10 +158,10 @@ export const RoomsScreen = () => {
    * @param room - The selected room
    */
   const handleRoomSelect = (room: Room) => {
-    logger.info('Room selected', { roomId: room.id, roomType: 'user' }, 'room');
+    logger.info('Room selected', { roomId: room.id, roomType: room.type }, 'room');
     navigation.navigate('Chat', {
       roomId: room.id,
-      roomType: 'user',
+      roomType: room.type,
       roomName: room.name
     });
   };

@@ -1,8 +1,8 @@
-import mqtt, { MqttClient, IClientOptions } from 'mqtt';
-import { logger } from '../utils/logger';
-import { getTraceId } from '../utils/trace';
-import { AppState, AppStateStatus } from 'react-native';
+import mqtt, { IClientOptions, MqttClient, MqttProtocol } from 'mqtt';
 import { MQTT_CONFIG } from '../config/mqtt';
+import { logger } from '../utils/logger';
+import { AppState, AppStateStatus } from 'react-native';
+import { getTraceId } from '../utils/trace';
 
 // Log MQTT library initialization
 console.log('MQTT library:', mqtt);
@@ -11,26 +11,41 @@ console.log('MQTT library connect function:', mqtt.connect);
 // Log MQTT service initialization
 console.log('Initializing MQTT service');
 
-export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error';
 
 type ConnectionStatusCallback = (status: ConnectionStatus) => void;
 type DisconnectedCallback = () => void;
 
-export interface MQTTService {
-  connect: (params: { token: string; userId: string }) => Promise<void>;
-  disconnect: () => Promise<void>;
-  publish: (topic: string, message: string) => Promise<void>;
-  subscribe: (topic: string) => Promise<void>;
-  unsubscribe: (topic: string) => Promise<void>;
-  isConnected: () => boolean;
-  getCurrentUserId: () => string | null;
-  setCallbacks: (callbacks: {
-    onConnectionStatusChange: (status: ConnectionStatus) => void;
-    onDisconnected: () => void;
-  }) => void;
+interface ConnectionHistory {
+  timestamp: number;
+  status: ConnectionStatus;
+  reason?: string;
+  latency?: number;
+}
+
+interface ConnectionCallbacks {
+  onConnectionStatusChange?: (status: ConnectionStatus) => void;
+  onDisconnected?: () => void;
+  onMessage?: (topic: string, message: string) => void;
+  onError?: (error: Error) => void;
+}
+
+interface MQTTService {
+  connect(params: { token: string; userId: string }): Promise<void>;
+  disconnect(): Promise<void>;
+  publish(topic: string, message: string): Promise<void>;
+  subscribe(topic: string): Promise<void>;
+  unsubscribe(topic: string): Promise<void>;
+  getConnectionStatus(): ConnectionStatus;
+  getConnectionQuality(): 'good' | 'fair' | 'poor';
+  getRetryCount(): number;
+  getLastError(): Error | null;
+  getConnectionHistory(): ConnectionHistory[];
+  setConnectionCallbacks(callbacks: ConnectionCallbacks): void;
 }
 
 class MQTTServiceImpl implements MQTTService {
+  private static instance: MQTTServiceImpl;
   private client: MqttClient | null = null;
   private messageHandlers: ((topic: string, message: any) => void)[] = [];
   private appStateSubscription: any = null;
@@ -45,12 +60,13 @@ class MQTTServiceImpl implements MQTTService {
   private circuitBreakerTimeout: NodeJS.Timeout | null = null;
   private lastError: Error | null = null;
   private connectionStatus: ConnectionStatus = 'disconnected';
-  private connectionCallbacks: {
-    onConnectionStatusChange: (status: ConnectionStatus) => void;
-    onDisconnected: () => void;
-  } | null = null;
+  private connectionCallbacks?: ConnectionCallbacks;
+  private connecting: boolean = false;
+  private connectionHistory: ConnectionHistory[] = [];
+  private lastPingTime: number = 0;
+  private lastPongTime: number = 0;
 
-  constructor() {
+  private constructor() {
     console.log('MQTT service constructor called');
     this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
     
@@ -82,13 +98,17 @@ class MQTTServiceImpl implements MQTTService {
     });
   }
 
-  public setCallbacks(callbacks: {
-    onConnectionStatusChange: (status: ConnectionStatus) => void;
-    onDisconnected: () => void;
-  }) {
+  static getInstance(): MQTTServiceImpl {
+    if (!MQTTServiceImpl.instance) {
+      MQTTServiceImpl.instance = new MQTTServiceImpl();
+    }
+    return MQTTServiceImpl.instance;
+  }
+
+  public setCallbacks(callbacks: ConnectionCallbacks) {
     this.connectionCallbacks = callbacks;
     // Immediately notify of current status
-    if (this.connectionStatus) {
+    if (this.connectionStatus && this.connectionCallbacks?.onConnectionStatusChange) {
       this.connectionCallbacks.onConnectionStatusChange(this.connectionStatus);
     }
   }
@@ -127,104 +147,37 @@ class MQTTServiceImpl implements MQTTService {
     }
   };
 
-  private testWebSocketConnection(url: string, traceId: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const wsUrl = url;
-
-      console.log('Testing WebSocket connection with:', {
-        url: wsUrl,
-        hasToken: !!this.currentToken,
-        tokenLength: this.currentToken?.length,
-        tokenPreview: this.currentToken ? `${this.currentToken.substring(0, 4)}...${this.currentToken.substring(this.currentToken.length - 4)}` : undefined,
-        protocol: MQTT_CONFIG.protocol,
-        host: MQTT_CONFIG.host,
-        port: MQTT_CONFIG.port,
-        path: MQTT_CONFIG.path
-      });
-
-      logger.info('Testing WebSocket connection', { 
-        url: wsUrl, 
-        traceId,
-        protocol: MQTT_CONFIG.protocol,
-        host: MQTT_CONFIG.host,
-        port: MQTT_CONFIG.port,
-        path: MQTT_CONFIG.path,
-        hasToken: !!this.currentToken,
-        tokenLength: this.currentToken?.length,
-        tokenPreview: this.currentToken ? `${this.currentToken.substring(0, 4)}...${this.currentToken.substring(this.currentToken.length - 4)}` : undefined,
-        userAgent: navigator.userAgent
-      }, 'mqtt');
+  async testWebSocketConnection(): Promise<boolean> {
+    try {
+      const ws = new WebSocket(MQTT_CONFIG.brokerUrl);
       
-      const ws = new WebSocket(wsUrl);
-      const timeout = setTimeout(() => {
-        logger.error('WebSocket connection test timed out', { 
-          url: wsUrl, 
-          traceId,
-          timeout: 5000,
-          readyState: ws.readyState,
-          protocol: ws.protocol,
-          extensions: ws.extensions,
-          binaryType: ws.binaryType
-        }, 'mqtt');
-        ws.close();
-        reject(new Error('WebSocket connection test timed out'));
-      }, 5000);
-
-      ws.onopen = () => {
-        clearTimeout(timeout);
-        logger.info('WebSocket connection test successful', { 
-          url: wsUrl, 
-          traceId,
-          protocol: ws.protocol,
-          readyState: ws.readyState,
-          extensions: ws.extensions,
-          binaryType: ws.binaryType,
-          userAgent: navigator.userAgent
-        }, 'mqtt');
-        ws.close();
-        resolve();
-      };
-
-      ws.onerror = (error) => {
-        clearTimeout(timeout);
-        const errorDetails = {
-          error,
-          url: wsUrl,
-          traceId,
-          readyState: ws.readyState,
-          protocol: ws.protocol,
-          extensions: ws.extensions,
-          binaryType: ws.binaryType,
-          userAgent: navigator.userAgent,
-          errorEvent: error instanceof Event ? {
-            type: error.type,
-            bubbles: error.bubbles,
-            cancelable: error.cancelable,
-            composed: error.composed,
-            eventPhase: error.eventPhase,
-            isTrusted: error.isTrusted,
-            timeStamp: error.timeStamp
-          } : error
+      return new Promise((resolve) => {
+        ws.onopen = () => {
+          logger.info('WebSocket connection test successful', {
+            url: MQTT_CONFIG.brokerUrl,
+            protocol: MQTT_CONFIG.protocol
+          }, 'mqtt');
+          ws.close();
+          resolve(true);
         };
-        console.error('WebSocket connection test failed:', errorDetails);
-        logger.error('WebSocket connection test failed', errorDetails, 'mqtt');
-        reject(new Error('WebSocket connection failed'));
-      };
-
-      ws.onclose = (event) => {
-        logger.info('WebSocket connection closed', {
-          url: wsUrl,
-          traceId,
-          code: event.code,
-          reason: event.reason,
-          wasClean: event.wasClean,
-          protocol: ws.protocol,
-          extensions: ws.extensions,
-          binaryType: ws.binaryType,
-          userAgent: navigator.userAgent
-        }, 'mqtt');
-      };
-    });
+        
+        ws.onerror = (error) => {
+          logger.error('WebSocket connection test failed', {
+            error,
+            url: MQTT_CONFIG.brokerUrl,
+            protocol: MQTT_CONFIG.protocol
+          }, 'mqtt');
+          resolve(false);
+        };
+      });
+    } catch (error) {
+      logger.error('WebSocket connection test error', {
+        error,
+        url: MQTT_CONFIG.brokerUrl,
+        protocol: MQTT_CONFIG.protocol
+      }, 'mqtt');
+      return false;
+    }
   }
 
   private calculateBackoffDelay(): number {
@@ -254,7 +207,17 @@ class MQTTServiceImpl implements MQTTService {
   async connect(params: { token: string; userId: string }): Promise<void> {
     const { token, userId } = params;
     const traceId = getTraceId();
-    const url = `${MQTT_CONFIG.protocol}://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}${MQTT_CONFIG.path}`;
+
+    // Log connection parameters (excluding full token for security)
+    logger.info('MQTT connection parameters', {
+      userId,
+      tokenLength: token.length,
+      tokenPreview: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
+      url: MQTT_CONFIG.brokerUrl,
+      protocol: MQTT_CONFIG.protocol,
+      path: MQTT_CONFIG.path,
+      traceId
+    }, 'mqtt');
 
     // If already connected with same user, resolve immediately
     if (this.client?.connected && this.currentUserId === userId) {
@@ -287,7 +250,7 @@ class MQTTServiceImpl implements MQTTService {
         this.currentUserId = userId;
 
         logger.info('Creating MQTT client', {
-          url,
+          url: MQTT_CONFIG.brokerUrl,
           userId,
           traceId,
           hasToken: !!token
@@ -299,7 +262,7 @@ class MQTTServiceImpl implements MQTTService {
           password: undefined,
           clean: true,
           path: MQTT_CONFIG.path,
-          protocol: MQTT_CONFIG.protocol,
+          protocol: MQTT_CONFIG.protocol as MqttProtocol,
           keepalive: MQTT_CONFIG.keepalive,
           connectTimeout: MQTT_CONFIG.connectTimeout,
           reconnectPeriod: 0, // Disable automatic reconnection
@@ -309,7 +272,7 @@ class MQTTServiceImpl implements MQTTService {
         };
 
         // Create MQTT client
-        this.client = mqtt.connect(url, options);
+        this.client = mqtt.connect(MQTT_CONFIG.brokerUrl, options);
 
         // Set up connection timeout
         const connectionTimeout = setTimeout(() => {
@@ -328,11 +291,13 @@ class MQTTServiceImpl implements MQTTService {
           this.retryCount = 0;
           this.lastError = null;
           this.connectionStatus = 'connected';
-          this.connectionCallbacks?.onConnectionStatusChange('connected');
+          if (this.connectionCallbacks?.onConnectionStatusChange) {
+            this.connectionCallbacks.onConnectionStatusChange('connected');
+          }
 
           logger.info('MQTT Connected', {
             userId,
-            url,
+            url: MQTT_CONFIG.brokerUrl,
             traceId
           }, 'mqtt');
 
@@ -344,11 +309,13 @@ class MQTTServiceImpl implements MQTTService {
           this.lastError = error;
           this.retryCount++;
           this.connectionStatus = 'error';
-          this.connectionCallbacks?.onConnectionStatusChange('error');
+          if (this.connectionCallbacks?.onConnectionStatusChange) {
+            this.connectionCallbacks.onConnectionStatusChange('error');
+          }
 
           logger.error('MQTT Error', {
             error,
-            url,
+            url: MQTT_CONFIG.brokerUrl,
             userId,
             traceId
           }, 'mqtt');
@@ -359,11 +326,15 @@ class MQTTServiceImpl implements MQTTService {
         this.client.on('close', () => {
           clearTimeout(connectionTimeout);
           this.connectionStatus = 'disconnected';
-          this.connectionCallbacks?.onConnectionStatusChange('disconnected');
-          this.connectionCallbacks?.onDisconnected();
+          if (this.connectionCallbacks?.onConnectionStatusChange) {
+            this.connectionCallbacks.onConnectionStatusChange('disconnected');
+          }
+          if (this.connectionCallbacks?.onDisconnected) {
+            this.connectionCallbacks.onDisconnected();
+          }
 
           logger.info('MQTT Connection Closed', {
-            url,
+            url: MQTT_CONFIG.brokerUrl,
             userId,
             traceId
           }, 'mqtt');
@@ -406,13 +377,15 @@ class MQTTServiceImpl implements MQTTService {
       } catch (error) {
         logger.error('MQTT Connection Error', {
           error,
-          url,
+          url: MQTT_CONFIG.brokerUrl,
           userId,
           traceId
         }, 'mqtt');
         
         this.connectionStatus = 'disconnected';
-        this.connectionCallbacks?.onConnectionStatusChange('disconnected');
+        if (this.connectionCallbacks?.onConnectionStatusChange) {
+          this.connectionCallbacks.onConnectionStatusChange('disconnected');
+        }
         reject(error);
       } finally {
         this.connectionPromise = null;
@@ -514,7 +487,9 @@ class MQTTServiceImpl implements MQTTService {
           this.currentUserId = null;
           this.currentToken = null;
           this.connectionStatus = 'disconnected';
-          this.connectionCallbacks?.onConnectionStatusChange('disconnected');
+          if (this.connectionCallbacks?.onConnectionStatusChange) {
+            this.connectionCallbacks.onConnectionStatusChange('disconnected');
+          }
           resolve();
         });
       });
@@ -545,6 +520,71 @@ class MQTTServiceImpl implements MQTTService {
   getCurrentUserId(): string | null {
     return this.currentUserId;
   }
+
+  getConnectionQuality(): 'good' | 'fair' | 'poor' {
+    const latency = this.lastPongTime - this.lastPingTime;
+    if (latency <= MQTT_CONFIG.connectionQuality.good) return 'good';
+    if (latency <= MQTT_CONFIG.connectionQuality.fair) return 'fair';
+    return 'poor';
+  }
+
+  getRetryCount(): number {
+    return this.retryCount;
+  }
+
+  getLastError(): Error | null {
+    return this.lastError;
+  }
+
+  getConnectionHistory(): ConnectionHistory[] {
+    return [...this.connectionHistory];
+  }
+
+  setConnectionCallbacks(callbacks: ConnectionCallbacks): void {
+    this.connectionCallbacks = callbacks;
+  }
+
+  private handleMessage(topic: string, message: Buffer): void {
+    try {
+      const messageStr = message.toString();
+      logger.info('Message received', {
+        topic,
+        message: messageStr,
+        url: MQTT_CONFIG.brokerUrl
+      }, 'mqtt');
+
+      if (this.connectionCallbacks?.onMessage) {
+        this.connectionCallbacks.onMessage(topic, messageStr);
+      }
+    } catch (error) {
+      logger.error('Error handling message', {
+        error,
+        topic,
+        url: MQTT_CONFIG.brokerUrl
+      }, 'mqtt');
+    }
+  }
+
+  private handleError(error: Error): void {
+    logger.error('MQTT Error', {
+      error,
+      url: MQTT_CONFIG.brokerUrl
+    }, 'mqtt');
+
+    if (this.connectionCallbacks?.onError) {
+      this.connectionCallbacks.onError(error);
+    }
+  }
+
+  private handleClose(): void {
+    logger.info('MQTT Connection Closed', {
+      url: MQTT_CONFIG.brokerUrl
+    }, 'mqtt');
+
+    if (this.connectionCallbacks?.onDisconnected) {
+      this.connectionCallbacks.onDisconnected();
+    }
+  }
 }
 
-export const mqttService = new MQTTServiceImpl(); 
+export const mqttService = MQTTServiceImpl.getInstance(); 

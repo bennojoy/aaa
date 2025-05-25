@@ -6,6 +6,7 @@ import { RootState } from '../store';
 import { messageReceived } from '../mqttSlice';
 import { addMessage, updateMessageStatus } from '../chatSlice';
 import { Message } from '../../types/message';
+import { MQTT_CONFIG } from '../../config/mqtt';
 
 interface SendMessageAction {
   type: 'chat/sendMessage';
@@ -198,62 +199,30 @@ export const mqttMiddleware: Middleware = (store) => {
     // Handle message sending
     if (isSendMessageAction(action)) {
       const { roomId, content, roomType, messageId } = action.payload;
-      const state = store.getState() as RootState;
-      const currentUserId = mqttService.getCurrentUserId();
+      const traceId = getTraceId();
 
-      if (!mqttService.isConnected()) {
-        logger.error('Cannot send message: MQTT not connected', {
-          roomId,
-          roomType,
-          messageId,
-          traceId
-        }, 'mqtt');
-        return result;
-      }
+      logger.info('Sending message', {
+        roomId,
+        roomType,
+        messageId,
+        traceId
+      }, 'mqtt');
 
-      const timestamp = new Date().toISOString();
-      const message: Message = {
-        id: messageId,
+      const message = {
         room_id: roomId,
-        room_type: roomType,
         content,
-        sender_id: currentUserId || '',  // Ensure sender_id is not null
-        timestamp,
-        client_timestamp: timestamp,
-        status: 'sending',
-        trace_id: traceId,
-        ...(roomType === 'assistant' ? { assistant_name: 'Assistant' } : {})
+        room_type: roomType,
+        message_id: messageId,
+        trace_id: traceId
       };
 
-      // Add message to store with 'sending' status
-      store.dispatch(addMessage({ roomId, message }));
-
-      mqttService.publish('messages/to_room', JSON.stringify(message))
-        .then(() => {
-          // Update message status to 'sent' after successful publish
-          store.dispatch(updateMessageStatus({ messageId, status: 'sent' }));
-          
-          logger.info('Message published successfully', {
-            messageId,
-            traceId,
-            currentState: {
-              isConnected: mqttService.isConnected(),
-              currentUserId
-            }
-          }, 'mqtt');
-        })
+      mqttService.publish(MQTT_CONFIG.topics.publish.messages, JSON.stringify(message))
         .catch(error => {
-          // Update message status to 'failed' if publish fails
-          store.dispatch(updateMessageStatus({ messageId, status: 'failed' }));
-          
           logger.error('Failed to publish message', {
             error,
+            roomId,
             messageId,
-            traceId,
-            currentState: {
-              isConnected: mqttService.isConnected(),
-              currentUserId
-            }
+            traceId
           }, 'mqtt');
         });
     }

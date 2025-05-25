@@ -4,13 +4,15 @@ import { useSelector, useDispatch } from 'react-redux';
 import { RouteProp, useRoute, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { RootState } from '../../store';
 import { getRoomMessages, getConnectionStatus } from '../../store/selectors/chatSelectors';
-import { markRoomAsRead } from '../../store/chatSlice';
+import { markRoomAsRead, addMessage, updateMessageStatus } from '../../store/chatSlice';
 import { connect } from '../../store/mqttSlice';
 import { logger } from '../../utils/logger';
 import { mqttService } from '../../services/mqtt';
 import { getTraceId } from '../../utils/trace';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { RootStackParamList } from '../../navigation/types';
+import { MQTT_CONFIG } from '../../config/mqtt';
+import { v4 as uuidv4 } from 'uuid';
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
 
@@ -41,9 +43,18 @@ export const ChatScreen = () => {
       logger.info('Chat screen focused', { traceId }, 'chat');
 
       if (connectionStatus === 'disconnected' && token && user?.id) {
+        const retryCount = mqttService.getRetryCount();
+        const lastError = mqttService.getLastError();
+        const connectionQuality = mqttService.getConnectionQuality();
+        const connectionHistory = mqttService.getConnectionHistory();
+
         logger.info('Attempting MQTT reconnection on screen focus', {
           userId: user.id,
-          hasToken: !!token
+          hasToken: !!token,
+          retryCount,
+          lastError: lastError?.message,
+          connectionQuality,
+          recentHistory: connectionHistory.slice(-3) // Last 3 connection events
         }, 'mqtt');
         
         dispatch(connect({ token, userId: user.id }));
@@ -77,16 +88,42 @@ export const ChatScreen = () => {
     }
   }, [dispatch, roomId, currentUserId]);
 
-  const handleSend = useCallback(() => {
-    if (newMessage.trim()) {
-      mqttService.publish(`messages/${roomId}`, JSON.stringify({
-        content: newMessage.trim(),
-        room_id: roomId,
-        type: 'message'
-      }));
-      setNewMessage('');
-    }
-  }, [newMessage, roomId]);
+  const handleSend = () => {
+    if (!newMessage.trim()) return;
+
+    const messageId = uuidv4();
+    const timestamp = new Date().toISOString();
+    const message = {
+      id: messageId,
+      content: newMessage.trim(),
+      room_id: roomId,
+      room_type: roomType as 'user' | 'assistant',
+      type: 'message',
+      sender_id: currentUserId || '',
+      trace_id: getTraceId(),
+      timestamp: timestamp,
+      client_timestamp: timestamp,
+      created_at: timestamp,
+      status: 'sending' as const
+    };
+
+    // Add message to Redux immediately
+    dispatch(addMessage({ roomId, message }));
+
+    // Publish to MQTT
+    mqttService.publish(MQTT_CONFIG.topics.publish.messages, JSON.stringify(message))
+      .catch(error => {
+        logger.error('Failed to send message', {
+          error,
+          roomId,
+          messageId
+        }, 'chat');
+        // Update message status to failed
+        dispatch(updateMessageStatus({ messageId, status: 'failed' }));
+      });
+
+    setNewMessage('');
+  };
 
   return (
     <KeyboardAvoidingView 
@@ -111,7 +148,7 @@ export const ChatScreen = () => {
           ]}>
             <Text style={styles.messageText}>{item.content}</Text>
             <Text style={styles.messageTime}>
-              {new Date(item.created_at).toLocaleTimeString()}
+              {new Date(item.timestamp || item.created_at).toLocaleTimeString()}
             </Text>
           </View>
         )}
