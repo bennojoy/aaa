@@ -120,7 +120,7 @@ async def receive_webhook(req: Request):
                 "error": str(e)
             }))
             return {"status": "nok"}
-        return {"status": "ok"}
+       
 
     if room_type == "user" and not content.startswith("@aip"):
         topic = "messages.ToUser"
