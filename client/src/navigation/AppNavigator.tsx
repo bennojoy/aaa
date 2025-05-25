@@ -76,17 +76,9 @@ export const AppNavigator = () => {
             <Stack.Screen 
               name="Chat" 
               component={ChatScreen}
-              options={({ route }) => ({
-                title: route.params.roomName,
-                headerShown: true,
-                headerBackTitle: 'Rooms',
-                headerBackVisible: true,
-                headerStyle: {
-                  backgroundColor: '#fff',
-                },
-                headerTintColor: '#000',
-                headerShadowVisible: false,
-              })}
+              options={{
+                headerShown: false,
+              }}
             />
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
