@@ -35,16 +35,26 @@ function* handleSearchRooms(action: ReturnType<typeof searchRoomsRequest>): Gene
       params: { query, skip, limit }
     });
 
+    // Deduplicate rooms from API response
+    const uniqueRooms = (response.data.rooms || []).reduce((acc: any[], room: any) => {
+      if (!acc.find(r => r.id === room.id)) {
+        acc.push(room);
+      }
+      return acc;
+    }, []);
+
     // Transform the response to match the expected structure
     const transformedData: RoomList = {
-      items: response.data.rooms || [],
-      total: response.data.total || 0,
+      items: uniqueRooms,
+      total: uniqueRooms.length,
       skip: skip,
       limit: limit
     };
 
     logger.info('Room search successful', {
       count: transformedData.items.length,
+      originalCount: response.data.rooms?.length || 0,
+      removedDuplicates: (response.data.rooms?.length || 0) - transformedData.items.length,
       query,
       traceId: response.data.trace_id
     }, 'room');

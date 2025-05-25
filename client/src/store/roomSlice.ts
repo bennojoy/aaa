@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { Room, RoomList, RoomSearchParams, CreateRoomParams, AddParticipantParams } from '../types/room';
+import { logger } from '../utils/logger';
 
 interface RoomState {
   rooms: Room[];
@@ -29,8 +30,22 @@ const roomSlice = createSlice({
     },
     searchRoomsSuccess: (state, action: PayloadAction<RoomList>) => {
       state.loading = false;
-      state.rooms = action.payload.items;
-      state.total = action.payload.total;
+      // Deduplicate rooms by ID before setting them in state
+      const uniqueRooms = action.payload.items.reduce((acc: Room[], room) => {
+        if (!acc.find(r => r.id === room.id)) {
+          acc.push(room);
+        }
+        return acc;
+      }, []);
+      
+      logger.info('Setting rooms in state', {
+        totalRooms: uniqueRooms.length,
+        originalCount: action.payload.items.length,
+        removedDuplicates: action.payload.items.length - uniqueRooms.length
+      }, 'room');
+      
+      state.rooms = uniqueRooms;
+      state.total = uniqueRooms.length;
     },
     searchRoomsFailure: (state, action: PayloadAction<string>) => {
       state.loading = false;
@@ -42,8 +57,22 @@ const roomSlice = createSlice({
     },
     createRoomSuccess: (state, action: PayloadAction<Room>) => {
       state.creatingRoom = false;
-      state.rooms.unshift(action.payload);
-      state.total += 1;
+      // Check if room already exists before adding
+      const roomExists = state.rooms.some(room => room.id === action.payload.id);
+      
+      if (!roomExists) {
+        logger.info('Adding new room to state', {
+          roomId: action.payload.id,
+          roomName: action.payload.name
+        }, 'room');
+        state.rooms.unshift(action.payload);
+        state.total += 1;
+      } else {
+        logger.info('Room already exists in state, skipping add', {
+          roomId: action.payload.id,
+          roomName: action.payload.name
+        }, 'room');
+      }
     },
     createRoomFailure: (state, action: PayloadAction<string>) => {
       state.creatingRoom = false;

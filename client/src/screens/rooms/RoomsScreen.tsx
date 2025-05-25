@@ -52,9 +52,18 @@ export const RoomsScreen = () => {
     Object.fromEntries(rooms.map(room => [room.id, getLastUnreadMessage(room.id)(state)]))
   );
 
-  // Sort rooms based on unread messages
+  // Sort rooms based on unread messages and ensure uniqueness
   const sortedRooms = React.useMemo(() => {
-    return [...rooms].sort((a, b) => {
+    // First deduplicate rooms by ID
+    const uniqueRooms = rooms.reduce((acc: Room[], room) => {
+      if (!acc.find(r => r.id === room.id)) {
+        acc.push(room);
+      }
+      return acc;
+    }, []);
+
+    // Then sort the unique rooms
+    return uniqueRooms.sort((a, b) => {
       const aUnread = unreadCounts[a.id] || 0;
       const bUnread = unreadCounts[b.id] || 0;
       if (aUnread > 0 && bUnread === 0) return -1;
@@ -300,7 +309,7 @@ export const RoomsScreen = () => {
       <FlatList
         data={sortedRooms}
         renderItem={renderRoom}
-        keyExtractor={(item) => `room-${item.id}`}
+        keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl
