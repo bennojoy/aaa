@@ -1,101 +1,92 @@
-import React, { useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, FlatList, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { View, StyleSheet, FlatList, KeyboardAvoidingView, Platform, Text, TouchableOpacity, TextInput, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
-import { RouteProp, useRoute, useFocusEffect } from '@react-navigation/native';
+import { RouteProp, useRoute, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { RootState } from '../../store';
 import { getRoomMessages, getConnectionStatus } from '../../store/selectors/chatSelectors';
-import { sendMessage } from '../../store/sagas/chatSaga';
 import { markRoomAsRead } from '../../store/chatSlice';
-import { Message, generateMessageId } from '../../types/message';
-import { MessageBubble } from './MessageBubble';
-import { MessageInput } from './MessageInput';
-import { ConnectionStatus } from './ConnectionStatus';
-import { logger } from '../../utils/logger';
 import { connect } from '../../store/mqttSlice';
+import { logger } from '../../utils/logger';
 import { mqttService } from '../../services/mqtt';
 import { getTraceId } from '../../utils/trace';
+import Icon from 'react-native-vector-icons/MaterialIcons';
+import { RootStackParamList } from '../../navigation/types';
 
-type ChatScreenRouteProp = RouteProp<{
-  Chat: {
-    roomId: string;
-    roomType: 'user' | 'assistant';
-    roomName: string;
-  };
-}, 'Chat'>;
+type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
 
-export const ChatScreen: React.FC = () => {
+export const ChatScreen = () => {
   const route = useRoute<ChatScreenRouteProp>();
+  const navigation = useNavigation();
   const { roomId, roomType, roomName } = route.params;
   const dispatch = useDispatch();
-  const flatListRef = useRef<FlatList>(null);
-  
+  const { currentUserId } = useSelector((state: RootState) => state.mqtt);
   const messages = useSelector(getRoomMessages(roomId));
   const connectionStatus = useSelector(getConnectionStatus);
-  const { currentUserId } = useSelector((state: RootState) => state.mqtt);
   const { token, user } = useSelector((state: RootState) => state.auth);
+  const [newMessage, setNewMessage] = useState('');
+  const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
+  const flatListRef = useRef<FlatList>(null);
 
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    logger.info('Chat screen mounted', { roomId, roomType, roomName }, 'chat');
-    // Mark messages as read when entering the room
-    if (currentUserId) {
-      dispatch(markRoomAsRead({ roomId, currentUserId }));
-    }
-    return () => {
-      logger.info('Chat screen unmounted', { roomId, roomType, roomName }, 'chat');
-    };
-  }, [roomId, roomType, roomName, currentUserId]);
-
-  useEffect(() => {
-    // Scroll to bottom when new messages arrive
-    if (messages.length > 0) {
+    if (isScrolledToBottom) {
       flatListRef.current?.scrollToEnd({ animated: true });
     }
-  }, [messages]);
+  }, [messages, isScrolledToBottom]);
 
-  // Handle MQTT reconnection when screen comes into focus
+  // Handle MQTT reconnection and mark messages as read when screen comes into focus
   useFocusEffect(
     useCallback(() => {
       const traceId = getTraceId();
       logger.info('Chat screen focused', { traceId }, 'chat');
 
-      // Check MQTT connection status
-      if (!mqttService.isConnected() && token && user?.id) {
-        logger.info('MQTT not connected, attempting to connect', {
+      if (connectionStatus === 'disconnected' && token && user?.id) {
+        logger.info('Attempting MQTT reconnection on screen focus', {
           userId: user.id,
-          hasToken: !!token,
-          traceId
-        }, 'chat');
-
+          hasToken: !!token
+        }, 'mqtt');
+        
         dispatch(connect({ token, userId: user.id }));
+      }
+
+      // Mark messages as read when component mounts or screen comes into focus
+      if (currentUserId) {
+        dispatch(markRoomAsRead({ roomId, currentUserId }));
+        flatListRef.current?.scrollToEnd({ animated: false });
       }
 
       return () => {
         logger.info('Chat screen unfocused', { traceId }, 'chat');
       };
-    }, [dispatch, token, user?.id])
+    }, [dispatch, token, user?.id, currentUserId, roomId, connectionStatus])
   );
 
-  const handleSendMessage = (content: string) => {
-    if (content.trim()) {
-      logger.info('Sending message', { roomId, roomType, content }, 'chat');
-      dispatch(sendMessage({ roomId, content, roomType, messageId: generateMessageId() }));
-    }
-  };
+  // Handle scroll events to detect if we're at the bottom
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 20;
+    const isAtBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+    setIsScrolledToBottom(isAtBottom);
+  }, []);
 
-  const renderMessage = useCallback(({ item }: { item: Message }) => (
-    <MessageBubble message={item} />
-  ), []);
-
-  const handleViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: any[] }) => {
-    // Mark messages as read when they become visible
-    if (viewableItems.length > 0 && currentUserId) {
+  // Scroll to bottom function
+  const scrollToBottom = useCallback(() => {
+    flatListRef.current?.scrollToEnd({ animated: true });
+    if (currentUserId) {
       dispatch(markRoomAsRead({ roomId, currentUserId }));
     }
-  }, [roomId, currentUserId, dispatch]);
+  }, [dispatch, roomId, currentUserId]);
 
-  const viewabilityConfig = {
-    itemVisiblePercentThreshold: 50
-  };
+  const handleSend = useCallback(() => {
+    if (newMessage.trim()) {
+      mqttService.publish(`messages/${roomId}`, JSON.stringify({
+        content: newMessage.trim(),
+        room_id: roomId,
+        type: 'message'
+      }));
+      setNewMessage('');
+    }
+  }, [newMessage, roomId]);
 
   return (
     <KeyboardAvoidingView 
@@ -103,20 +94,64 @@ export const ChatScreen: React.FC = () => {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <ConnectionStatus status={connectionStatus} />
-      
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Icon name="arrow-back" size={24} color="#007AFF" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{roomName}</Text>
+      </View>
+
       <FlatList
         ref={flatListRef}
         data={messages}
-        renderItem={renderMessage}
+        renderItem={({ item }) => (
+          <View style={[
+            styles.messageContainer,
+            item.sender_id === currentUserId ? styles.sentMessage : styles.receivedMessage
+          ]}>
+            <Text style={styles.messageText}>{item.content}</Text>
+            <Text style={styles.messageTime}>
+              {new Date(item.created_at).toLocaleTimeString()}
+            </Text>
+          </View>
+        )}
         keyExtractor={item => item.id}
         contentContainerStyle={styles.messageList}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        onViewableItemsChanged={handleViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        onEndReachedThreshold={0.5}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>
+            No messages yet. Start the conversation!
+          </Text>
+        }
       />
 
-      <MessageInput onSend={handleSendMessage} />
+      {!isScrolledToBottom && (
+        <TouchableOpacity 
+          style={styles.scrollToBottomButton}
+          onPress={scrollToBottom}
+        >
+          <Icon name="arrow-downward" size={24} color="#fff" />
+        </TouchableOpacity>
+      )}
+
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          value={newMessage}
+          onChangeText={setNewMessage}
+          placeholder="Type a message..."
+          multiline
+        />
+        <TouchableOpacity 
+          style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]} 
+          onPress={handleSend}
+          disabled={!newMessage.trim()}
+        >
+          <Icon name="send" size={24} color={newMessage.trim() ? "#007AFF" : "#ccc"} />
+        </TouchableOpacity>
+      </View>
     </KeyboardAvoidingView>
   );
 };
@@ -126,7 +161,91 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  backButton: {
+    padding: 8,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginLeft: 16,
+  },
   messageList: {
     padding: 16,
+  },
+  messageContainer: {
+    maxWidth: '80%',
+    padding: 12,
+    borderRadius: 16,
+    marginBottom: 8,
+  },
+  sentMessage: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#007AFF',
+  },
+  receivedMessage: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#E5E5EA',
+  },
+  messageText: {
+    fontSize: 16,
+    color: '#000',
+  },
+  messageTime: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
+  scrollToBottomButton: {
+    position: 'absolute',
+    right: 20,
+    bottom: 80,
+    backgroundColor: '#007AFF',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  input: {
+    flex: 1,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    marginRight: 8,
+    maxHeight: 100,
+  },
+  sendButton: {
+    padding: 12,
+  },
+  sendButtonDisabled: {
+    opacity: 0.5,
+  },
+  emptyText: {
+    textAlign: 'center',
+    marginTop: 16,
+    color: '#666',
   },
 }); 
