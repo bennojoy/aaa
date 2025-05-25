@@ -10,6 +10,7 @@ import { logger } from '../../utils/logger';
 import { getTraceId } from '../../utils/trace';
 import { createAction } from '@reduxjs/toolkit';
 import { MQTT_CONFIG } from '../../config/mqtt';
+import { RootState } from '../../store';
 
 // Action types
 const SEND_MESSAGE = 'chat/sendMessage';
@@ -19,7 +20,7 @@ const MARK_MESSAGES_AS_READ = 'chat/markMessagesAsRead';
 
 // Action creators
 export const sendMessage = createAction<{ roomId: string; content: string; roomType: string; messageId: string }>('chat/sendMessage');
-export const markMessagesAsRead = createAction<{ roomId: string }>('chat/markMessagesAsRead');
+export const markMessagesAsRead = createAction<{ roomId: string; currentUserId: string }>('chat/markMessagesAsRead');
 export const initializeMqtt = createAction<{ token: string; userId: string }>('chat/initializeMqtt');
 export const enterRoom = createAction<{ roomId: string }>('chat/enterRoom');
 
@@ -58,22 +59,14 @@ function* handleInitializeMqtt(action: ReturnType<typeof initializeMqtt>): Gener
 function* handleEnterRoom(action: ReturnType<typeof enterRoom>): Generator<any, void, any> {
   const { roomId } = action.payload;
   const traceId = getTraceId();
+  const currentUserId = yield select((state: RootState) => state.mqtt.currentUserId);
 
   logger.info('Entering room', { roomId, traceId }, 'chat');
   // Mark messages as read when entering room
-  yield put(markMessagesAsRead({ roomId }));
-}
-
-function* handleMarkMessagesAsRead(action: ReturnType<typeof markMessagesAsRead>): Generator<any, void, any> {
-  const { roomId } = action.payload;
-  const traceId = getTraceId();
-
-  logger.info('Marking messages as read', { roomId, traceId }, 'chat');
-  // This will be handled by the chat reducer
+  yield put(markRoomAsRead({ roomId, currentUserId }));
 }
 
 export function* chatSaga(): Generator<any, void, any> {
   yield takeLatest(INITIALIZE_MQTT, handleInitializeMqtt);
   yield takeLatest(ENTER_ROOM, handleEnterRoom);
-  yield takeLatest(MARK_MESSAGES_AS_READ, handleMarkMessagesAsRead);
 } 

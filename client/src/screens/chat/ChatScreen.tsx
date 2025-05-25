@@ -4,7 +4,8 @@ import { useSelector, useDispatch } from 'react-redux';
 import { RouteProp, useRoute, useFocusEffect } from '@react-navigation/native';
 import { RootState } from '../../store';
 import { getRoomMessages, getConnectionStatus } from '../../store/selectors/chatSelectors';
-import { sendMessage, markMessagesAsRead } from '../../store/sagas/chatSaga';
+import { sendMessage } from '../../store/sagas/chatSaga';
+import { markRoomAsRead } from '../../store/chatSlice';
 import { Message, generateMessageId } from '../../types/message';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
@@ -36,11 +37,13 @@ export const ChatScreen: React.FC = () => {
   useEffect(() => {
     logger.info('Chat screen mounted', { roomId, roomType, roomName }, 'chat');
     // Mark messages as read when entering the room
-    dispatch(markMessagesAsRead({ roomId }));
+    if (currentUserId) {
+      dispatch(markRoomAsRead({ roomId, currentUserId }));
+    }
     return () => {
       logger.info('Chat screen unmounted', { roomId, roomType, roomName }, 'chat');
     };
-  }, [roomId, roomType, roomName]);
+  }, [roomId, roomType, roomName, currentUserId]);
 
   useEffect(() => {
     // Scroll to bottom when new messages arrive
@@ -85,10 +88,10 @@ export const ChatScreen: React.FC = () => {
 
   const handleViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: any[] }) => {
     // Mark messages as read when they become visible
-    if (viewableItems.length > 0) {
-      dispatch(markMessagesAsRead({ roomId }));
+    if (viewableItems.length > 0 && currentUserId) {
+      dispatch(markRoomAsRead({ roomId, currentUserId }));
     }
-  }, [roomId, dispatch]);
+  }, [roomId, currentUserId, dispatch]);
 
   const viewabilityConfig = {
     itemVisiblePercentThreshold: 50

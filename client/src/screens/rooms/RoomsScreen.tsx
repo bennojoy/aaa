@@ -246,6 +246,13 @@ export const RoomsScreen = () => {
               <Text style={styles.unreadPreviewText} numberOfLines={1}>
                 {lastUnread.content}
               </Text>
+              <Text style={styles.messageStatus}>
+                {lastUnread.status === 'delivered' ? 'Delivered' : 
+                 lastUnread.status === 'read' ? 'Read' : 
+                 lastUnread.status === 'sent' ? 'Sent' : 
+                 lastUnread.status === 'sending' ? 'Sending...' : 
+                 lastUnread.status === 'failed' ? 'Failed' : lastUnread.status}
+              </Text>
             </View>
           )}
           <View style={styles.cardFooter}>
@@ -293,7 +300,7 @@ export const RoomsScreen = () => {
       <FlatList
         data={sortedRooms}
         renderItem={renderRoom}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => `room-${item.id}`}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl
@@ -517,5 +524,11 @@ const styles = StyleSheet.create({
   unreadPreviewText: {
     fontSize: 14,
     color: '#666',
+  },
+  messageStatus: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    fontStyle: 'italic'
   },
 }); 

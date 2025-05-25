@@ -18,12 +18,17 @@ export const getLastUnreadMessage = (roomId: string) => (state: RootState) => {
   const roomMessages = state.chat.messages[roomId];
   if (!roomMessages) return null;
 
+  const currentUserId = state.mqtt.currentUserId;
+  if (!currentUserId) return null;
+
   // Get all messages and sort by timestamp in descending order
   const messages = Object.values(roomMessages.items)
     .sort((a, b) => new Date(b.client_timestamp).getTime() - new Date(a.client_timestamp).getTime());
 
-  // Find the first unread message (status is 'delivered')
-  return messages.find(msg => msg.status === 'delivered') || null;
+  // Find the first unread message that is not from the current user
+  return messages.find(msg => 
+    msg.status === 'delivered' && msg.sender_id !== currentUserId
+  ) || null;
 };
 
 export const getMessageStatus = (messageId: string) => (state: RootState) => {

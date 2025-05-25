@@ -1,6 +1,8 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { ChatState, Message, MessageStatus } from '../types/message';
 import { logger } from '../utils/logger';
+import { RootState } from './index';
+import { store } from '../store';
 
 const initialState: ChatState = {
   messages: {},
@@ -83,16 +85,46 @@ const chatSlice = createSlice({
       state.sendingStatus[messageId] = status;
     },
 
-    markRoomAsRead: (state, action: PayloadAction<string>) => {
-      const roomId = action.payload;
+    markRoomAsRead: (state, action: PayloadAction<{ roomId: string; currentUserId: string }>) => {
+      const { roomId, currentUserId } = action.payload;
       if (state.messages[roomId]) {
+        console.log('Starting markRoomAsRead:', {
+          roomId,
+          currentUserId,
+          totalMessages: Object.keys(state.messages[roomId].items).length,
+          currentUnreadCount: state.messages[roomId].unread
+        });
+
+        // Reset unread count
         state.messages[roomId].unread = 0;
-        // Update all message statuses to 'read'
+        
+        // Update all message statuses to 'read' for messages from other users
+        let updatedCount = 0;
         Object.values(state.messages[roomId].items).forEach(message => {
-          if (message.status === 'delivered') {
+          const oldStatus = message.status;
+          if (message.sender_id !== currentUserId && message.status !== 'read') {
             message.status = 'read';
+            updatedCount++;
+            console.log('Message status updated:', {
+              messageId: message.id,
+              senderId: message.sender_id,
+              oldStatus,
+              newStatus: message.status,
+              content: message.content.substring(0, 50) // Log first 50 chars of content
+            });
           }
         });
+
+        // Debug log for marking room as read
+        console.log('Room marked as read complete:', {
+          roomId,
+          unreadCount: state.messages[roomId].unread,
+          totalMessages: Object.keys(state.messages[roomId].items).length,
+          messagesUpdated: updatedCount,
+          currentState: state.messages[roomId]
+        });
+      } else {
+        console.log('Room not found in state:', { roomId });
       }
     },
 

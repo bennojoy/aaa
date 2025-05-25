@@ -76,6 +76,13 @@ export const mqttMiddleware: Middleware = (store) => {
         }
       }, 'mqtt');
 
+      // Handle message status updates
+      if (parsedMessage.type === 'message_status') {
+        const { message_id, status } = parsedMessage;
+        store.dispatch(updateMessageStatus({ messageId: message_id, status }));
+        return;
+      }
+
       // Extract message details
       const messageId = parsedMessage.id;
       const roomId = parsedMessage.room_id;
