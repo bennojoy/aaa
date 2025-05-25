@@ -11,7 +11,7 @@ console.log('MQTT library connect function:', mqtt.connect);
 // Log MQTT service initialization
 console.log('Initializing MQTT service');
 
-type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error';
+type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error' | 'retry_limit_reached';
 
 type ConnectionStatusCallback = (status: ConnectionStatus) => void;
 type DisconnectedCallback = () => void;
@@ -53,18 +53,15 @@ class MQTTServiceImpl implements MQTTService {
   private currentUserId: string | null = null;
   private currentToken: string | null = null;
   private retryCount = 0;
-  private maxRetries = 5;
-  private baseDelay = 1000; // 1 second
-  private maxDelay = 30000; // 30 seconds
-  private circuitBreakerOpen = false;
-  private circuitBreakerTimeout: NodeJS.Timeout | null = null;
-  private lastError: Error | null = null;
+  private lastRetryTimestamp = 0;
+  private retryTimeout: NodeJS.Timeout | null = null;
   private connectionStatus: ConnectionStatus = 'disconnected';
   private connectionCallbacks?: ConnectionCallbacks;
   private connecting: boolean = false;
   private connectionHistory: ConnectionHistory[] = [];
   private lastPingTime: number = 0;
   private lastPongTime: number = 0;
+  private lastError: Error | null = null;
 
   private constructor() {
     console.log('MQTT service constructor called');
@@ -181,61 +178,94 @@ class MQTTServiceImpl implements MQTTService {
   }
 
   private calculateBackoffDelay(): number {
-    const delay = Math.min(this.baseDelay * Math.pow(2, this.retryCount), this.maxDelay);
-    return delay + Math.random() * 1000; // Add jitter
+    const delay = Math.min(
+      MQTT_CONFIG.retry.minRetryInterval * Math.pow(2, this.retryCount),
+      MQTT_CONFIG.retry.maxRetryInterval
+    );
+    const jitter = Math.random() * MQTT_CONFIG.retry.jitter;
+    return delay + jitter;
   }
 
-  private openCircuitBreaker() {
-    this.circuitBreakerOpen = true;
-    logger.info('Circuit breaker opened', {
-      retryCount: this.retryCount,
-      lastError: this.lastError?.message
-    }, 'mqtt');
-
-    // Reset circuit breaker after 30 seconds
-    if (this.circuitBreakerTimeout) {
-      clearTimeout(this.circuitBreakerTimeout);
+  private scheduleRetry(): void {
+    if (this.retryCount >= MQTT_CONFIG.retry.maxRetries) {
+      this.connectionStatus = 'retry_limit_reached';
+      if (this.connectionCallbacks?.onConnectionStatusChange) {
+        this.connectionCallbacks.onConnectionStatusChange('retry_limit_reached');
+      }
+      logger.warn('MQTT retry limit reached', {
+        retryCount: this.retryCount,
+        maxRetries: MQTT_CONFIG.retry.maxRetries,
+        lastError: this.lastError?.message
+      }, 'mqtt');
+      return;
     }
-    this.circuitBreakerTimeout = setTimeout(() => {
-      this.circuitBreakerOpen = false;
-      this.retryCount = 0;
-      this.lastError = null;
-      logger.info('Circuit breaker reset', null, 'mqtt');
-    }, 30000);
+
+    const delay = this.calculateBackoffDelay();
+    this.lastRetryTimestamp = Date.now();
+
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+    }
+
+    this.retryTimeout = setTimeout(() => {
+      if (this.currentToken && this.currentUserId) {
+        this.connect({ token: this.currentToken, userId: this.currentUserId })
+          .catch(error => {
+            logger.error('Retry connection failed', {
+              error,
+              retryCount: this.retryCount,
+              delay
+            }, 'mqtt');
+          });
+      }
+    }, delay);
+
+    logger.info('Scheduled MQTT retry', {
+      retryCount: this.retryCount,
+      delay,
+      maxRetries: MQTT_CONFIG.retry.maxRetries
+    }, 'mqtt');
   }
 
   async connect(params: { token: string; userId: string }): Promise<void> {
     const { token, userId } = params;
     const traceId = getTraceId();
 
-    // Log connection parameters (excluding full token for security)
-    logger.info('MQTT connection parameters', {
-      userId,
-      tokenLength: token.length,
-      tokenPreview: token ? `${token.substring(0, 4)}...${token.substring(token.length - 4)}` : undefined,
-      url: MQTT_CONFIG.brokerUrl,
-      protocol: MQTT_CONFIG.protocol,
-      path: MQTT_CONFIG.path,
-      traceId
-    }, 'mqtt');
+    // Check if we have valid credentials
+    if (!token || !userId) {
+      logger.warn('Cannot connect: Missing credentials', {
+        hasToken: !!token,
+        hasUserId: !!userId,
+        traceId
+      }, 'mqtt');
+      return;
+    }
 
-    // If already connected with same user, resolve immediately
+    // If already connecting, wait for that connection
+    if (this.connectionPromise) {
+      logger.info('Connection already in progress, waiting...', {
+        userId,
+        traceId
+      }, 'mqtt');
+      return this.connectionPromise;
+    }
+
+    // If already connected with same user, do nothing
     if (this.client?.connected && this.currentUserId === userId) {
       logger.info('Already connected with same user', {
         userId,
-        retryCount: this.retryCount
+        traceId
       }, 'mqtt');
-      return Promise.resolve();
+      return;
     }
 
-    // If there's an ongoing connection attempt, return that promise
-    if (this.connectionPromise) {
-      logger.info('Connection attempt already in progress', {
+    // If retry limit reached, don't attempt connection
+    if (this.connectionStatus === 'retry_limit_reached') {
+      logger.warn('Connection attempt blocked: Retry limit reached', {
         userId,
-        currentUserId: this.currentUserId,
-        retryCount: this.retryCount
+        traceId
       }, 'mqtt');
-      return this.connectionPromise;
+      return;
     }
 
     this.connectionPromise = new Promise(async (resolve, reject) => {
@@ -248,12 +278,14 @@ class MQTTServiceImpl implements MQTTService {
         // Set current token and user ID
         this.currentToken = token;
         this.currentUserId = userId;
+        this.connectionStatus = 'connecting';
 
         logger.info('Creating MQTT client', {
           url: MQTT_CONFIG.brokerUrl,
           userId,
           traceId,
-          hasToken: !!token
+          hasToken: !!token,
+          retryCount: this.retryCount
         }, 'mqtt');
 
         const options: IClientOptions = {
@@ -265,9 +297,9 @@ class MQTTServiceImpl implements MQTTService {
           protocol: MQTT_CONFIG.protocol as MqttProtocol,
           keepalive: MQTT_CONFIG.keepalive,
           connectTimeout: MQTT_CONFIG.connectTimeout,
-          reconnectPeriod: 0, // Disable automatic reconnection
+          reconnectPeriod: MQTT_CONFIG.reconnectPeriod,
           wsOptions: {
-            rejectUnauthorized: false // Allow self-signed certificates in development
+            rejectUnauthorized: false
           }
         };
 
@@ -281,6 +313,7 @@ class MQTTServiceImpl implements MQTTService {
             this.lastError = error;
             this.retryCount++;
             this.client?.end();
+            this.scheduleRetry();
             reject(error);
           }
         }, MQTT_CONFIG.connectTimeout);
@@ -317,9 +350,11 @@ class MQTTServiceImpl implements MQTTService {
             error,
             url: MQTT_CONFIG.brokerUrl,
             userId,
-            traceId
+            traceId,
+            retryCount: this.retryCount
           }, 'mqtt');
 
+          this.scheduleRetry();
           reject(error);
         });
 
@@ -334,6 +369,32 @@ class MQTTServiceImpl implements MQTTService {
           }
 
           logger.info('MQTT Connection Closed', {
+            url: MQTT_CONFIG.brokerUrl,
+            userId,
+            traceId
+          }, 'mqtt');
+        });
+
+        this.client.on('offline', () => {
+          this.connectionStatus = 'disconnected';
+          if (this.connectionCallbacks?.onConnectionStatusChange) {
+            this.connectionCallbacks.onConnectionStatusChange('disconnected');
+          }
+
+          logger.info('MQTT Client Offline', {
+            url: MQTT_CONFIG.brokerUrl,
+            userId,
+            traceId
+          }, 'mqtt');
+        });
+
+        this.client.on('reconnect', () => {
+          this.connectionStatus = 'connecting';
+          if (this.connectionCallbacks?.onConnectionStatusChange) {
+            this.connectionCallbacks.onConnectionStatusChange('connecting');
+          }
+
+          logger.info('MQTT Reconnecting', {
             url: MQTT_CONFIG.brokerUrl,
             userId,
             traceId
@@ -382,10 +443,12 @@ class MQTTServiceImpl implements MQTTService {
           traceId
         }, 'mqtt');
         
-        this.connectionStatus = 'disconnected';
+        this.retryCount++;
+        this.connectionStatus = 'error';
         if (this.connectionCallbacks?.onConnectionStatusChange) {
-          this.connectionCallbacks.onConnectionStatusChange('disconnected');
+          this.connectionCallbacks.onConnectionStatusChange('error');
         }
+        this.scheduleRetry();
         reject(error);
       } finally {
         this.connectionPromise = null;

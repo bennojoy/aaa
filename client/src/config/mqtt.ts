@@ -2,12 +2,16 @@ export const MQTT_CONFIG = {
   brokerUrl: 'ws://localhost:8083',
   path: '/mqtt',
   protocol: 'ws',
-  keepalive: 60, // 60 seconds keep-alive
+  keepalive: 30, // 30 seconds keep-alive
   connectTimeout: 30000,
-  reconnectPeriod: 1000, // 1 second initial delay
-  maxRetries: 10,
-  minRetryInterval: 1000, // 1 second
-  maxRetryInterval: 30000, // 30 seconds
+  reconnectPeriod: 0, // Disable automatic reconnection, we'll handle it manually
+  // Retry configuration
+  retry: {
+    maxRetries: 10,
+    minRetryInterval: 1000, // 1 second
+    maxRetryInterval: 30000, // 30 seconds
+    jitter: 1000, // Maximum jitter in milliseconds
+  },
   clean: true,
   // Add connection quality thresholds
   connectionQuality: {

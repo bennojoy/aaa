@@ -91,6 +91,21 @@ export const ChatScreen = () => {
   const handleSend = () => {
     if (!newMessage.trim()) return;
 
+    // Check if MQTT is actually connected
+    if (!mqttService.isConnected()) {
+      logger.warn('MQTT not connected, attempting to reconnect', {
+        roomId,
+        userId: currentUserId,
+        traceId: getTraceId()
+      }, 'chat');
+
+      // Attempt to reconnect
+      if (token && user?.id) {
+        dispatch(connect({ token, userId: user.id }));
+      }
+      return;
+    }
+
     const messageId = uuidv4();
     const timestamp = new Date().toISOString();
     const message = {
