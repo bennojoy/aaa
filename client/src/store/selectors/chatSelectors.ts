@@ -14,6 +14,18 @@ export const getRoomUnreadCount = (roomId: string) => (state: RootState) => {
   return state.chat.messages[roomId]?.unread || 0;
 };
 
+export const getLastUnreadMessage = (roomId: string) => (state: RootState) => {
+  const roomMessages = state.chat.messages[roomId];
+  if (!roomMessages) return null;
+
+  // Get all messages and sort by timestamp in descending order
+  const messages = Object.values(roomMessages.items)
+    .sort((a, b) => new Date(b.client_timestamp).getTime() - new Date(a.client_timestamp).getTime());
+
+  // Find the first unread message (status is 'delivered')
+  return messages.find(msg => msg.status === 'delivered') || null;
+};
+
 export const getMessageStatus = (messageId: string) => (state: RootState) => {
   return state.chat.sendingStatus[messageId] || 'sending';
 };

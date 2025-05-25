@@ -1,11 +1,13 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { Room, RoomList, RoomSearchParams } from '../types/room';
+import { Room, RoomList, RoomSearchParams, CreateRoomParams, AddParticipantParams } from '../types/room';
 
 interface RoomState {
   rooms: Room[];
   total: number;
   loading: boolean;
   error: string | null;
+  creatingRoom: boolean;
+  addingParticipant: boolean;
 }
 
 const initialState: RoomState = {
@@ -13,6 +15,8 @@ const initialState: RoomState = {
   total: 0,
   loading: false,
   error: null,
+  creatingRoom: false,
+  addingParticipant: false,
 };
 
 const roomSlice = createSlice({
@@ -32,6 +36,30 @@ const roomSlice = createSlice({
       state.loading = false;
       state.error = action.payload;
     },
+    createRoomRequest: (state, action: PayloadAction<CreateRoomParams>) => {
+      state.creatingRoom = true;
+      state.error = null;
+    },
+    createRoomSuccess: (state, action: PayloadAction<Room>) => {
+      state.creatingRoom = false;
+      state.rooms.unshift(action.payload);
+      state.total += 1;
+    },
+    createRoomFailure: (state, action: PayloadAction<string>) => {
+      state.creatingRoom = false;
+      state.error = action.payload;
+    },
+    addParticipantRequest: (state, action: PayloadAction<AddParticipantParams>) => {
+      state.addingParticipant = true;
+      state.error = null;
+    },
+    addParticipantSuccess: (state) => {
+      state.addingParticipant = false;
+    },
+    addParticipantFailure: (state, action: PayloadAction<string>) => {
+      state.addingParticipant = false;
+      state.error = action.payload;
+    },
     clearRoomError: (state) => {
       state.error = null;
     },
@@ -42,6 +70,12 @@ export const {
   searchRoomsRequest,
   searchRoomsSuccess,
   searchRoomsFailure,
+  createRoomRequest,
+  createRoomSuccess,
+  createRoomFailure,
+  addParticipantRequest,
+  addParticipantSuccess,
+  addParticipantFailure,
   clearRoomError,
 } = roomSlice.actions;
 

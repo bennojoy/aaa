@@ -40,4 +40,55 @@ export interface RoomSearchParams {
   skip?: number;
   /** Maximum number of rooms to return */
   limit?: number;
+}
+
+/**
+ * Parameters for creating a new room
+ */
+export interface CreateRoomParams {
+  /** Name of the room */
+  name: string;
+  /** Description of the room */
+  description?: string;
+  /** Type of the room */
+  type: 'user' | 'assistant';
+}
+
+/**
+ * Parameters for searching users
+ */
+export interface UserSearchParams {
+  /** Search query to filter users */
+  query: string;
+}
+
+/**
+ * User search result
+ */
+export interface UserSearchResult {
+  /** Array of user objects */
+  users: Array<{
+    /** User ID */
+    id: string;
+    /** User's name */
+    name: string;
+    /** User's phone number */
+    phone_number: string;
+    /** User's status */
+    status: string;
+  }>;
+}
+
+/**
+ * Parameters for adding a participant to a room
+ */
+export interface AddParticipantParams {
+  /** Room ID */
+  roomId: string;
+  /** User ID to add */
+  userId: string;
+  /** Role of the participant (optional) */
+  role?: 'member' | 'admin';
+  /** Status of the participant (optional) */
+  status?: 'active';
 } 
