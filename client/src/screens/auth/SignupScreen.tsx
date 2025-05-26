@@ -27,12 +27,24 @@ export const SignupScreen = () => {
     phone_number: '',
     password: ''
   });
+  const [showSuccess, setShowSuccess] = useState(false);
   const passwordInputRef = useRef<any>(null);
 
   useEffect(() => {
     // Clear any previous errors when component mounts
     dispatch(clearError());
   }, [dispatch]);
+
+  // Handle successful signup
+  useEffect(() => {
+    if (!loading && !error && showSuccess) {
+      // Navigate to login screen after a short delay
+      const timer = setTimeout(() => {
+        navigation.navigate('Login');
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [loading, error, showSuccess, navigation]);
 
   const validateForm = (): boolean => {
     const errors: ValidationErrors = {};
@@ -60,6 +72,7 @@ export const SignupScreen = () => {
       return;
     }
     logger.debug('Dispatching signup request', { signupData }, 'auth');
+    setShowSuccess(true);
     dispatch(signupRequest(signupData));
   };
 
@@ -85,6 +98,10 @@ export const SignupScreen = () => {
         
         {error && (
           <Text style={styles.error}>{error}</Text>
+        )}
+
+        {showSuccess && !error && !loading && (
+          <Text style={styles.success}>Account created successfully! Redirecting to login...</Text>
         )}
 
         <Input
@@ -148,6 +165,11 @@ const styles = StyleSheet.create({
   },
   error: {
     color: 'red',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  success: {
+    color: 'green',
     textAlign: 'center',
     marginBottom: 10,
   },

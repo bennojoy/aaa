@@ -122,41 +122,27 @@ function* handleSignup(action: ReturnType<typeof signupRequest>): Generator<any,
       }
     );
 
-    const { access_token, user_id } = response.data;
+    const { id } = response.data;
 
-    if (!access_token) {
-      throw new Error('No access token received');
-    }
-
-    if (!user_id) {
+    if (!id) {
       throw new Error('No user ID received');
     }
 
     // Create a minimal user object with the ID
     const user: User = {
-      id: user_id,
+      id,
       phone_number,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    // Store token and user data
-    yield call([storage, 'setToken'], access_token);
-    yield call([storage, 'setUserData'], user);
+    logger.info('Signup successful', { phone_number, userId: id }, 'auth');
 
-    logger.info('Signup successful', { phone_number, userId: user_id }, 'auth');
+    // Dispatch signup success without token
+    yield put(signupSuccess({ user, access_token: null }));
 
-    // First dispatch signup success
-    yield put(signupSuccess({ user, access_token }));
-
-    // Wait for auth state to be updated
-    const authState = yield select(getAuthState);
-    if (!authState.user || !authState.token) {
-      throw new Error('Auth state not properly updated');
-    }
-
-    // Initialize MQTT connection after signup success
-    yield put(initializeMqtt({ token: access_token, userId: user_id }));
+    // Navigate to login screen
+    yield put({ type: 'NAVIGATE_TO_LOGIN' });
 
   } catch (error: any) {
     logger.error('Signup failed', {
