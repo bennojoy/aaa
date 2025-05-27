@@ -52,7 +52,6 @@ class AssistantConsumer(BaseConsumer):
 
         # Get participants and visibility
         all_participants = [p["user_id"] for p in permission_data.get("participants", [])]
-        # Get visibility from the original message payload, not from permission_data
         visibility = payload.get("visibility", "public")
         
         logging.info(json.dumps({
@@ -81,12 +80,11 @@ class AssistantConsumer(BaseConsumer):
 
         # Calculate timezone offset from client timestamp
         timezone_offset = None
-        client_timestamp = payload.get("client_timestamp")
+        client_timestamp = payload.get("timestamp")
         if client_timestamp:
             try:
                 client_time = datetime.fromisoformat(client_timestamp)
                 server_time = datetime.now(timezone.utc)
-                # Calculate offset in minutes
                 offset_minutes = int((client_time - server_time).total_seconds() / 60)
                 timezone_offset = offset_minutes
                 logging.info(f"Updated timezone offset to {offset_minutes} minutes for trace_id: {trace_id}")
@@ -95,7 +93,7 @@ class AssistantConsumer(BaseConsumer):
 
         # Build user context for the agent
         user_context = UserContext(
-            name=None,  # You can fill this if available
+            name=None,
             language=payload.get("language", "en"),
             sender_id=payload["sender_id"],
             receiver_id=None,
@@ -105,10 +103,20 @@ class AssistantConsumer(BaseConsumer):
         )
 
         # Format message for the agent
-        # If the message starts with @ai, remove it
         user_message = payload["content"]
         if user_message.startswith("@ai"):
             user_message = user_message[4:].strip()
+
+        # Get message history if available
+        history = payload.get("history", [])
+        if history:
+            # Format history into a conversation context
+            conversation_context = "\n".join([
+                f"{'Assistant' if msg['role'] == 'assistant' else 'User'}: {msg['content']}"
+                for msg in history
+            ])
+            # Combine history with current message
+            user_message = f"{conversation_context}\nUser: {user_message}"
 
         # Call the runner to get the AI reply
         try:

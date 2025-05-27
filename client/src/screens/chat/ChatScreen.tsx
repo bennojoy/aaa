@@ -13,6 +13,9 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { RootStackParamList } from '../../navigation/types';
 import { MQTT_CONFIG } from '../../config/mqtt';
 import { v4 as uuidv4 } from 'uuid';
+import { getMessageHistory } from '../../utils/messageFormat';
+import { Message } from '../../types/message';
+import { MessageWithHistory } from '../../types/chat';
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
 
@@ -108,18 +111,31 @@ export const ChatScreen = () => {
 
     const messageId = uuidv4();
     const timestamp = new Date().toISOString();
-    const message = {
+    const isAIMessage = roomType === 'assistant' || newMessage.startsWith('@ai');
+
+    // Get message history if needed
+    const history = isAIMessage 
+      ? getMessageHistory(
+          messages, 
+          currentUserId || '', 
+          MQTT_CONFIG.messageHistory.maxMessages,
+          roomType,
+          newMessage
+        )
+      : null;
+
+    const message: MessageWithHistory = {
       id: messageId,
       content: newMessage.trim(),
       room_id: roomId,
       room_type: roomType as 'user' | 'assistant',
-      type: 'message',
       sender_id: currentUserId || '',
       trace_id: getTraceId(),
       timestamp: timestamp,
       client_timestamp: timestamp,
-      created_at: timestamp,
-      status: 'sending' as const
+      status: 'sending' as const,
+      history,
+      ...(roomType === 'assistant' ? { assistant_name: 'Assistant' } : {})
     };
 
     // Add message to Redux immediately

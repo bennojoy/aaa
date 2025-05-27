@@ -27,5 +27,11 @@ export const MQTT_CONFIG = {
     subscribe: {
       user: (userId: string) => `user/${userId}/message`  // Function to generate user-specific topic
     }
+  },
+  messageHistory: {
+    maxMessages: 10
+  },
+  ai: {
+    senderId: '2d90c5f0-f3ca-4fb4-a726-ac90316635d6'
   }
 }; 
