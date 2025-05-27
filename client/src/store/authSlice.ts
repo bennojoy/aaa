@@ -19,6 +19,11 @@ const authSlice = createSlice({
   name: 'auth',
   initialState,
   reducers: {
+    clearAuthState: (state) => {
+      state.user = null;
+      state.token = null;
+      state.error = null;
+    },
     // Login actions
     loginRequest: (state, action: PayloadAction<LoginCredentials>) => {
       state.loading = true;
@@ -28,6 +33,7 @@ const authSlice = createSlice({
       state.loading = false;
       state.user = action.payload.user;
       state.token = action.payload.access_token;
+      state.error = null;
     },
     loginFailure: (state, action: PayloadAction<string>) => {
       state.loading = false;
@@ -60,6 +66,7 @@ const authSlice = createSlice({
 });
 
 export const {
+  clearAuthState,
   loginRequest,
   loginSuccess,
   loginFailure,

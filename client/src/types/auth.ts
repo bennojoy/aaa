@@ -22,6 +22,8 @@ export interface SignupData {
 }
 
 export interface AuthResponse {
+  access_token: string;
+  user_id: string;
   id: string;
   phone_number: string;
   alias: string;
@@ -33,5 +35,4 @@ export interface AuthResponse {
   created_at: string;
   updated_at: string | null;
   trace_id: string;
-  access_token?: string;
 } 

@@ -7,6 +7,7 @@ import {
   signupSuccess,
   signupFailure,
   logout,
+  clearAuthState,
 } from '../authSlice';
 import { disconnected, connect, setUserId } from '../mqttSlice';
 import { apiClient } from '../../api/client';
@@ -36,6 +37,9 @@ function* handleLogin(action: ReturnType<typeof loginRequest>): Generator<any, v
   logger.info('Login attempt', { identifier, traceId }, 'auth');
 
   try {
+    // Clear any existing auth state first
+    yield put(clearAuthState());
+
     const response: AxiosResponse<AuthResponse> = yield call(
       apiClient.post,
       '/api/v1/auth/signin',
