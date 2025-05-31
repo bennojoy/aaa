@@ -1,5 +1,8 @@
 import { RefObject } from 'react';
 import { store } from '../store/store';
+import { getAuthToken } from '../store/selectors/authSelectors';
+import { logger } from '../utils/logger';
+import { apiClient } from '../api/client';
 
 interface WebRTCEvent {
   type: string;
@@ -25,184 +28,291 @@ interface WebRTCEvent {
 }
 
 export class WebRTCService {
-  private pc: RTCPeerConnection | null = null;
-  private dc: RTCDataChannel | null = null;
+  private peerConnection: RTCPeerConnection | null = null;
+  private dataChannel: RTCDataChannel | null = null;
+  private isCallActive: boolean = false;
+  private traceId: string = '';
   private audioElement: RefObject<HTMLAudioElement | null>;
   private onMessageCallback: ((event: any) => void) | null = null;
 
   constructor(audioElement: RefObject<HTMLAudioElement | null>) {
     this.audioElement = audioElement;
+    this.traceId = crypto.randomUUID();
   }
 
   setMessageCallback(callback: (event: any) => void) {
     this.onMessageCallback = callback;
   }
 
-  async startCall(agentInstructions: string) {
+  async startCall(): Promise<void> {
     try {
-      console.log('Starting WebRTC call...');
-      
-      // Get token from Redux store
+      if (this.isCallActive) {
+        logger.warn('Call already active', { traceId: this.traceId });
+        return;
+      }
+
+      // Get auth token from Redux store
       const state = store.getState();
-      const token = state.auth.token;
-      
+      logger.info('Current Redux state:', { 
+        state: {
+          auth: {
+            token: state.auth.token,
+            isAuthenticated: state.auth.isAuthenticated,
+            hasUser: !!state.auth.user
+          }
+        },
+        traceId: this.traceId 
+      });
+
+      const token = getAuthToken(state);
       if (!token) {
+        logger.error('No authentication token available', { 
+          state: {
+            auth: {
+              token: state.auth.token,
+              isAuthenticated: state.auth.isAuthenticated,
+              hasUser: !!state.auth.user
+            }
+          },
+          traceId: this.traceId 
+        });
         throw new Error('No authentication token available');
       }
 
-      // 1. Create peer connection
-      this.pc = new RTCPeerConnection();
-      console.log('Peer connection created');
-      
-      // 2. Set up audio track handling
-      this.pc.ontrack = (e) => {
-        console.log('Received audio track:', e.track.kind);
+      logger.info('Got auth token', { 
+        tokenLength: token.length,
+        tokenPreview: `${token.substring(0, 4)}...${token.substring(token.length - 4)}`,
+        traceId: this.traceId 
+      });
+
+      // Get ephemeral token from our backend
+      const response = await apiClient.post('/api/v1/webrtc/ephemeral-token');
+      const { ephemeral_token } = response.data;
+      logger.info('Got ephemeral token', { traceId: this.traceId });
+
+      // Initialize WebRTC connection with OpenAI
+      this.peerConnection = new RTCPeerConnection();
+
+      // Set up audio track handling for remote audio
+      this.peerConnection.ontrack = (e) => {
+        logger.info('Received remote audio track', { 
+          trackKind: e.track.kind,
+          traceId: this.traceId 
+        });
         if (this.audioElement.current) {
           this.audioElement.current.srcObject = e.streams[0];
+          // Ensure audio playback is enabled
+          this.audioElement.current.play().catch(error => {
+            logger.error('Failed to play audio', { 
+              error, 
+              traceId: this.traceId 
+            });
+          });
         }
       };
 
-      // 3. Get user's microphone and add track
-      console.log('Requesting microphone access...');
+      // Set up local audio track
       const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('Microphone access granted');
-      this.pc.addTrack(ms.getTracks()[0]);
+      const audioTrack = ms.getTracks()[0];
+      this.peerConnection.addTrack(audioTrack);
+      logger.info('Added local audio track', { 
+        trackKind: audioTrack.kind,
+        traceId: this.traceId 
+      });
 
-      // 4. Create data channel
-      this.dc = this.pc.createDataChannel("oai-events");
-      console.log('Data channel created');
+      // Create data channel
+      this.dataChannel = this.peerConnection.createDataChannel('oai-events');
       this.setupDataChannelHandlers();
 
-      // 5. Create and set local description (offer)
-      console.log('Creating offer...');
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
-      console.log('Local description set');
+      // Create and set local description
+      logger.info('Creating WebRTC offer', { traceId: this.traceId });
+      const offer = await this.peerConnection.createOffer();
+      logger.info('WebRTC offer created', { 
+        offer: {
+          type: offer.type,
+          sdpLength: offer.sdp?.length,
+        },
+        traceId: this.traceId 
+      });
 
-      // 6. Send offer to OpenAI's realtime API
-      console.log('Sending offer to OpenAI...');
-      const baseUrl = "https://api.openai.com/v1/realtime";
-      const model = "gpt-4o-realtime-preview-2024-12-17";
+      logger.info('Setting local description', { traceId: this.traceId });
+      await this.peerConnection.setLocalDescription(offer);
+      logger.info('Local description set successfully', { traceId: this.traceId });
+
+      // Exchange SDP with OpenAI's realtime API
+      logger.info('Initiating SDP exchange with OpenAI', { 
+        url: 'https://api.openai.com/v1/realtime',
+        traceId: this.traceId 
+      });
+
+      const baseUrl = 'https://api.openai.com/v1/realtime';
+      const model = 'gpt-4o-realtime-preview-2024-12-17';
 
       const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
-        method: "POST",
+        method: 'POST',
         body: offer.sdp,
         headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/sdp",
+          'Authorization': `Bearer ${ephemeral_token}`,
+          'Content-Type': 'application/sdp',
         },
       });
 
-      // 7. Get and set remote description (answer)
-      console.log('Received answer from OpenAI');
+      if (!sdpResponse.ok) {
+        logger.error('SDP exchange failed', { 
+          status: sdpResponse.status,
+          statusText: sdpResponse.statusText,
+          traceId: this.traceId 
+        });
+        throw new Error('Failed to establish WebRTC connection');
+      }
+
+      logger.info('SDP exchange successful', { 
+        status: sdpResponse.status,
+        traceId: this.traceId 
+      });
+
       const answerSdp = await sdpResponse.text();
+      logger.info('Received SDP answer', { 
+        sdpLength: answerSdp.length,
+        traceId: this.traceId 
+      });
+
       const answer: RTCSessionDescriptionInit = {
-        type: "answer",
+        type: 'answer',
         sdp: answerSdp,
       };
-      await this.pc.setRemoteDescription(answer);
-      console.log('Remote description set');
 
-      // 8. Send initial session update
-      console.log('Sending session update...');
-      await this.updateSession(agentInstructions);
-      console.log('Session update sent');
+      logger.info('Setting remote description', { traceId: this.traceId });
+      await this.peerConnection.setRemoteDescription(answer);
+      logger.info('Remote description set successfully', { traceId: this.traceId });
 
-      return true;
+      this.isCallActive = true;
+      logger.info('WebRTC call started successfully', { 
+        connectionState: this.peerConnection.connectionState,
+        iceConnectionState: this.peerConnection.iceConnectionState,
+        traceId: this.traceId 
+      });
+
     } catch (error) {
-      console.error("Error starting call:", error);
+      logger.error('Failed to start call', { 
+        error, 
+        traceId: this.traceId 
+      });
+      this.cleanup();
       throw error;
     }
   }
 
-  private setupDataChannelHandlers() {
-    if (!this.dc) return;
+  private setupDataChannelHandlers(): void {
+    if (!this.dataChannel) return;
 
-    this.dc.addEventListener("open", () => {
-      console.log("Data channel opened");
-    });
-
-    this.dc.addEventListener("close", () => {
-      console.log("Data channel closed");
-    });
-
-    this.dc.addEventListener("error", (error) => {
-      console.error("Data channel error:", error);
-    });
-
-    this.dc.addEventListener("message", (event) => {
-      const data = JSON.parse(event.data);
-      console.log('Received data channel message:', data);
-      
-      // Log specific event types
-      switch (data.type) {
-        case 'conversation.item.create':
-          console.log('New conversation item:', data.item);
-          break;
-        case 'transcription':
-          console.log('Transcription:', data.text);
-          break;
-        case 'function.call':
-          console.log('Function call:', data.function);
-          break;
-        case 'response.create':
-          console.log('Response created');
-          break;
-        case 'response.done':
-          console.log('Response completed');
-          break;
-      }
-
-      if (this.onMessageCallback) {
-        this.onMessageCallback(data);
-      }
-    });
-  }
-
-  async updateSession(instructions: string) {
-    const sessionUpdateEvent: WebRTCEvent = {
-      type: "session.update",
-      session: {
-        modalities: ["text", "audio"],
-        instructions,
-        voice: "sage",
-        input_audio_transcription: { model: "whisper-1" },
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.9,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
-          create_response: true
-        },
-        tools: []
-      }
+    this.dataChannel.onopen = () => {
+      logger.info('Data channel opened', { traceId: this.traceId });
     };
 
-    console.log('Sending session update event:', sessionUpdateEvent);
-    this.sendEvent(sessionUpdateEvent);
-  }
+    this.dataChannel.onclose = () => {
+      logger.info('Data channel closed', { traceId: this.traceId });
+      this.cleanup();
+    };
 
-  sendEvent(event: WebRTCEvent) {
-    if (this.dc?.readyState === "open") {
-      console.log('Sending event:', event);
-      this.dc.send(JSON.stringify(event));
-    } else {
-      console.error("Cannot send event - data channel not open");
-    }
-  }
-
-  async endCall() {
-    console.log('Ending call...');
-    if (this.pc) {
-      this.pc.getSenders().forEach((sender) => {
-        if (sender.track) {
-          sender.track.stop();
-        }
+    this.dataChannel.onerror = (error) => {
+      logger.error('Data channel error', { 
+        error, 
+        traceId: this.traceId 
       });
-      this.pc.close();
-      this.pc = null;
+      this.cleanup();
+    };
+
+    this.dataChannel.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        logger.info('Received message', { 
+          message, 
+          traceId: this.traceId 
+        });
+
+        // Handle session.created event
+        if (message.type === 'session.created') {
+          // Send session.update with agent configuration
+          const sessionUpdateEvent = {
+            type: 'session.update',
+            session: {
+              modalities: ['text', 'audio'],
+              instructions: 'You are a helpful AI assistant.',
+              voice: 'sage',
+              input_audio_transcription: { model: 'whisper-1' },
+              turn_detection: {
+                type: 'server_vad',
+                threshold: 0.9,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 500,
+                create_response: true
+              },
+              tools: []
+            }
+          };
+          
+          this.dataChannel?.send(JSON.stringify(sessionUpdateEvent));
+          logger.info('Sent session.update event', { 
+            event: sessionUpdateEvent,
+            traceId: this.traceId 
+          });
+        }
+
+        if (this.onMessageCallback) {
+          this.onMessageCallback(message);
+        }
+      } catch (error) {
+        logger.error('Failed to parse message', { 
+          error, 
+          traceId: this.traceId 
+        });
+      }
+    };
+  }
+
+  sendMessage(message: string): void {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      logger.warn('Cannot send message - data channel not open', { 
+        traceId: this.traceId 
+      });
+      return;
     }
-    this.dc = null;
-    console.log('Call ended');
+
+    try {
+      this.dataChannel.send(JSON.stringify({
+        type: 'message',
+        content: message,
+      }));
+      logger.info('Message sent', { 
+        message, 
+        traceId: this.traceId 
+      });
+    } catch (error) {
+      logger.error('Failed to send message', { 
+        error, 
+        traceId: this.traceId 
+      });
+    }
+  }
+
+  endCall(): void {
+    logger.info('Ending call', { traceId: this.traceId });
+    this.cleanup();
+  }
+
+  private cleanup(): void {
+    if (this.dataChannel) {
+      this.dataChannel.close();
+      this.dataChannel = null;
+    }
+
+    if (this.peerConnection) {
+      this.peerConnection.close();
+      this.peerConnection = null;
+    }
+
+    this.isCallActive = false;
+    logger.info('Call cleaned up', { traceId: this.traceId });
   }
 } 

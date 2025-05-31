@@ -5,7 +5,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        primary: '#40E0D0',
+        primary: '#30D5C8',
         secondary: '#5856D6',
         background: '#FFFFFF',
         foreground: '#000000',
@@ -21,6 +21,7 @@ module.exports = {
         error: '#FF3B30',
         warning: '#FFCC00',
         disabled: '#cccccc',
+        tiffany: '#0ABAB5',
       },
       fontFamily: {
         sans: ['System'],

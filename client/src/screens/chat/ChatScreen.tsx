@@ -298,7 +298,7 @@ export const ChatScreen = () => {
           <Icon 
             name={isCallActive ? "call-end" : "call"} 
             size={24} 
-            color={isCallActive ? "#fff" : "#007AFF"} 
+            color={isCallActive ? "#fff" : "#30D5C8"} 
           />
         </TouchableOpacity>
 
@@ -316,7 +316,7 @@ export const ChatScreen = () => {
           onPress={handleSend}
           disabled={!newMessage.trim()}
         >
-          <Icon name="send" size={24} color={newMessage.trim() ? "#007AFF" : "#86939e"} />
+          <Icon name="send" size={24} color={newMessage.trim() ? "#30D5C8" : "#86939e"} />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -355,19 +355,20 @@ const styles = StyleSheet.create({
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#007AFF',
+    backgroundColor: '#0ABAB5',
+    opacity: 0.8,
   },
   aiMessage: {
     alignSelf: 'flex-start',
-    backgroundColor: '#fff',
+    backgroundColor: '#0ABAB5',
   },
   messageText: {
     fontSize: 16,
-    color: '#000',
+    color: '#fff',
   },
   timestamp: {
     fontSize: 12,
-    color: '#86939e',
+    color: 'rgba(255, 255, 255, 0.7)',
     marginTop: 4,
   },
   inputContainer: {
