@@ -4,7 +4,6 @@ export type RootStackParamList = {
   Login: undefined;
   Signup: undefined;
   Rooms: undefined;
-  Main: undefined;
   Chat: {
     roomId: string;
     roomType: 'user' | 'assistant';

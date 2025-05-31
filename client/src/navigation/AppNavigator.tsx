@@ -7,7 +7,6 @@ import { LoginScreen } from '../screens/auth/LoginScreen';
 import { SignupScreen } from '../screens/auth/SignupScreen';
 import { RoomsScreen } from '../screens/rooms/RoomsScreen';
 import { RootStackParamList } from './types';
-import { MainNavigator } from './MainNavigator';
 import { ChatScreen } from '../screens/chat/ChatScreen';
 import { ProfileScreen } from '../screens/main/ProfileScreen';
 import { SettingsScreen } from '../screens/main/SettingsScreen';
@@ -72,7 +71,6 @@ export const AppNavigator = () => {
                 headerShown: true,
               }}
             />
-            <Stack.Screen name="Main" component={MainNavigator} />
             <Stack.Screen 
               name="Chat" 
               component={ChatScreen}
