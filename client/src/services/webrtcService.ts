@@ -38,6 +38,15 @@ export class WebRTCService {
   constructor(audioElement: RefObject<HTMLAudioElement | null>) {
     this.audioElement = audioElement;
     this.traceId = crypto.randomUUID();
+    
+    // Create and attach audio element if it doesn't exist
+    if (!this.audioElement.current) {
+      const audio = document.createElement('audio');
+      audio.autoplay = true;
+      document.body.appendChild(audio);
+      // @ts-ignore - we know this is safe to do
+      this.audioElement.current = audio;
+    }
   }
 
   setMessageCallback(callback: (event: any) => void) {
@@ -315,4 +324,4 @@ export class WebRTCService {
     this.isCallActive = false;
     logger.info('Call cleaned up', { traceId: this.traceId });
   }
-} 
+}
