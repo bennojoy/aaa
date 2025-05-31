@@ -1,27 +1,50 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, TouchableOpacity, TextInput, Modal, ActivityIndicator } from 'react-native';
-import { Text, Card, Button, Input, Overlay } from 'react-native-elements';
+import { View, FlatList, RefreshControl, TouchableOpacity, TextInput, Modal, ActivityIndicator, StyleSheet } from 'react-native';
+import { Text } from 'react-native-elements';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootState } from '../../store';
-import { 
-  searchRoomsRequest, 
-  clearRoomError,
+import { RootState } from '../../store/store';
+import {
+  searchRoomsRequest,
+  searchRoomsSuccess,
+  searchRoomsFailure,
   createRoomRequest,
+  createRoomSuccess,
+  createRoomFailure,
+  clearRoomError,
   addParticipantRequest
-} from '../../store/roomSlice';
+} from '../../store/slices/roomSlice';
 import { logger } from '../../utils/logger';
 import { Room } from '../../types/room';
 import { RootStackParamList } from '../../navigation/types';
-import { logout } from '../../store/authSlice';
+import { logout } from '../../store/slices/authSlice';
 import { storage } from '../../utils/storage';
 import { validateToken } from '../../utils/auth';
-import { connect } from '../../store/mqttSlice';
+import { connect as connectMQTT } from '../../store/slices/mqttSlice';
 import { apiClient } from '../../api/client';
 import { getRoomUnreadCount, getLastUnreadMessage } from '../../store/selectors/chatSelectors';
+import { getTraceId } from '../../utils/trace';
+import { loginRequest } from '../../store/slices/authSlice';
+import {
+  selectRooms,
+  selectRoomLoading,
+  selectRoomError,
+  selectCreatingRoom,
+  selectAddingParticipant,
+  selectUnreadCounts,
+  selectLastUnreadMessages
+} from '../../store/selectors/roomSelectors';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Rooms'>;
+
+interface AuthState {
+  token: string | null;
+  user: {
+    id: string;
+    name: string;
+  } | null;
+}
 
 /**
  * RoomsScreen Component
@@ -30,9 +53,16 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Rooms'>;
 export const RoomsScreen = () => {
   const dispatch = useDispatch();
   const navigation = useNavigation<NavigationProp>();
-  const { rooms = [], loading, error, creatingRoom, addingParticipant } = useSelector((state: RootState) => state.rooms || { rooms: [], loading: false, error: null });
+  
+  // Use selectors with default values
+  const rooms = useSelector(selectRooms) || [];
+  const loading = useSelector(selectRoomLoading) || false;
+  const error = useSelector(selectRoomError) || null;
+  const creatingRoom = useSelector(selectCreatingRoom) || false;
+  const addingParticipant = useSelector(selectAddingParticipant) || false;
+  
   const { connectionStatus, currentUserId } = useSelector((state: RootState) => state.mqtt);
-  const { token } = useSelector((state: RootState) => state.auth);
+  const { token, user } = useSelector((state: RootState & { auth: AuthState }) => state.auth);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [showAddParticipant, setShowAddParticipant] = useState(false);
@@ -44,36 +74,56 @@ export const RoomsScreen = () => {
   const [isSearching, setIsSearching] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout>();
 
-  // Get unread counts and last unread message for all rooms
-  const unreadCounts = useSelector((state: RootState) => 
-    Object.fromEntries(rooms.map(room => [room.id, getRoomUnreadCount(room.id)(state)]))
-  );
-  const lastUnreadMessages = useSelector((state: RootState) => 
-    Object.fromEntries(rooms.map(room => [room.id, getLastUnreadMessage(room.id)(state)]))
-  );
+  const unreadCounts = useSelector(selectUnreadCounts);
+  const lastUnreadMessages = useSelector(selectLastUnreadMessages);
+
+  console.log('RoomsScreen state:', {
+    rooms,
+    loading,
+    error,
+    creatingRoom,
+    addingParticipant,
+    unreadCounts,
+    lastUnreadMessages,
+    mqtt: { connectionStatus, currentUserId },
+    auth: { token: !!token, user }
+  });
 
   // Sort rooms based on unread messages and ensure uniqueness
   const sortedRooms = React.useMemo(() => {
+    console.log('Computing sortedRooms:', { inputRooms: rooms, unreadCounts });
+
     // First deduplicate rooms by ID
-    const uniqueRooms = rooms.reduce((acc: Room[], room) => {
+    const uniqueRooms = rooms.reduce((acc: Room[], room: Room) => {
       if (!acc.find(r => r.id === room.id)) {
         acc.push(room);
       }
       return acc;
     }, []);
 
+    console.log('Unique rooms:', uniqueRooms);
+
     // Then sort the unique rooms
-    return uniqueRooms.sort((a, b) => {
+    const sorted = uniqueRooms.sort((a: Room, b: Room) => {
       const aUnread = unreadCounts[a.id] || 0;
       const bUnread = unreadCounts[b.id] || 0;
       if (aUnread > 0 && bUnread === 0) return -1;
       if (aUnread === 0 && bUnread > 0) return 1;
-      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+      
+      // Handle null updated_at values by using created_at as fallback
+      const aDate = a.updated_at ? new Date(a.updated_at) : new Date(a.created_at);
+      const bDate = b.updated_at ? new Date(b.updated_at) : new Date(b.created_at);
+      return bDate.getTime() - aDate.getTime();
     });
+
+    console.log('Sorted rooms:', sorted);
+
+    return sorted;
   }, [rooms, unreadCounts]);
 
   useEffect(() => {
-    logger.info('Rooms screen mounted', null, 'room');
+    const traceId = getTraceId();
+    logger.info('Rooms screen mounted', { traceId }, 'room');
     validateTokenAndLoadRooms();
     return () => {
       logger.info('Rooms screen unmounted', null, 'room');
@@ -91,7 +141,7 @@ export const RoomsScreen = () => {
             hasToken: !!token
           }, 'mqtt');
           
-          dispatch(connect({ token, userId: currentUserId }));
+          dispatch(connectMQTT({ token, userId: currentUserId }));
         }
       };
 
@@ -112,7 +162,7 @@ export const RoomsScreen = () => {
       }
 
       // Load rooms when component mounts
-      dispatch(searchRoomsRequest({}));
+      dispatch(searchRoomsRequest({ query: '' }));
     } catch (error) {
       logger.error('Token validation failed', { error }, 'auth');
       handleLogout();
@@ -167,16 +217,17 @@ export const RoomsScreen = () => {
   };
 
   const handleCreateRoom = () => {
-    if (newRoomName.trim()) {
-      dispatch(createRoomRequest({
-        name: newRoomName.trim(),
-        description: newRoomDescription.trim(),
-        type: 'user'
-      }));
-      setShowCreateRoom(false);
-      setNewRoomName('');
-      setNewRoomDescription('');
+    if (!user?.id) {
+      logger.error('Cannot create room: No user ID', null, 'room');
+      return;
     }
+
+    const roomName = `Room ${rooms.length + 1}`;
+    dispatch(createRoomRequest({
+      name: roomName,
+      description: 'Created from mobile app',
+      type: 'user'
+    }));
   };
 
   const handleAddParticipant = async () => {
@@ -240,155 +291,182 @@ export const RoomsScreen = () => {
 
     return (
       <TouchableOpacity onPress={() => handleRoomSelect(room)}>
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>{room.name}</Text>
+        <View className="bg-white p-4 mb-2 rounded-lg shadow-sm">
+          <View className="flex-row justify-between items-center">
+            <Text className="text-lg font-semibold text-foreground">{room.name}</Text>
             {unreadCount > 0 && (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadCount}>{unreadCount}</Text>
+              <View className="bg-primary rounded-full px-2 py-1">
+                <Text className="text-white text-sm">{unreadCount}</Text>
               </View>
             )}
           </View>
-          <Text style={styles.description}>{room.description}</Text>
           {lastUnread && (
-            <View style={styles.unreadPreview}>
-              <Text style={styles.unreadPreviewText} numberOfLines={1}>
-                {lastUnread.content}
-              </Text>
-              <Text style={styles.messageStatus}>
-                {lastUnread.status === 'delivered' ? 'Delivered' : 
-                 lastUnread.status === 'read' ? 'Read' : 
-                 lastUnread.status === 'sent' ? 'Sent' : 
-                 lastUnread.status === 'sending' ? 'Sending...' : 
-                 lastUnread.status === 'failed' ? 'Failed' : lastUnread.status}
-              </Text>
-            </View>
-          )}
-          <View style={styles.cardFooter}>
-            <Text style={styles.timestamp}>
-              Created: {new Date(room.created_at).toLocaleDateString()}
+            <Text className="text-grey-2 mt-1" numberOfLines={1}>
+              {lastUnread.content}
             </Text>
-            <TouchableOpacity 
-              onPress={() => {
-                setSelectedRoom(room);
-                setShowAddParticipant(true);
-              }}
-              style={styles.addButton}
-            >
-              <Text style={styles.addButtonText}>Add Participant</Text>
-            </TouchableOpacity>
-          </View>
+          )}
         </View>
       </TouchableOpacity>
     );
   };
 
+  const renderEmptyList = () => {
+    if (!loading) {
+      return (
+        <Text className="text-grey-2 text-center mt-8">
+          No rooms found
+        </Text>
+      );
+    }
+    return null;
+  };
+
+  const renderSearchEmptyList = () => {
+    if (participantSearchQuery.trim()) {
+      return (
+        <Text className="text-grey-2 text-center py-4">
+          No users found
+        </Text>
+      );
+    }
+    return null;
+  };
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search rooms..."
-            value={searchQuery}
-            onChangeText={handleSearch}
-            placeholderTextColor="#999"
-          />
-        </View>
-        <Button
-          title="Create Room"
-          onPress={() => setShowCreateRoom(true)}
-          buttonStyle={styles.createButton}
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search rooms..."
+          placeholderTextColor="#86939e"
+          value={searchQuery}
+          onChangeText={handleSearch}
         />
       </View>
 
       {error && (
-        <Text style={styles.error}>{error}</Text>
+        <Text style={styles.errorText}>{error}</Text>
       )}
 
       <FlatList
         data={sortedRooms}
         renderItem={renderRoom}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        keyExtractor={item => item.id}
         refreshControl={
           <RefreshControl
             refreshing={loading}
             onRefresh={handleRefresh}
+            colors={['#007AFF']}
           />
         }
-        ListEmptyComponent={
-          !loading ? (
-            <Text style={styles.emptyText}>
-              No rooms found. Create a new room to get started!
-            </Text>
-          ) : null
-        }
+        contentContainerStyle={styles.roomList}
+        ListEmptyComponent={renderEmptyList}
       />
 
-      {/* Create Room Modal */}
-      <Overlay
-        isVisible={showCreateRoom}
-        onBackdropPress={() => setShowCreateRoom(false)}
-        overlayStyle={styles.modal}
+      <TouchableOpacity
+        style={[styles.createButton, creatingRoom && styles.createButtonDisabled]}
+        onPress={handleCreateRoom}
+        disabled={creatingRoom}
       >
-        <Text h4 style={styles.modalTitle}>Create New Room</Text>
-        <Input
-          placeholder="Room Name"
-          value={newRoomName}
-          onChangeText={setNewRoomName}
-          autoFocus
-        />
-        <Input
-          placeholder="Description (optional)"
-          value={newRoomDescription}
-          onChangeText={setNewRoomDescription}
-          multiline
-        />
-        <Button
-          title="Create"
-          onPress={handleCreateRoom}
-          loading={creatingRoom}
-          disabled={!newRoomName.trim() || creatingRoom}
-        />
-      </Overlay>
+        <Text style={styles.createButtonText}>
+          {creatingRoom ? 'Creating...' : 'Create Room'}
+        </Text>
+      </TouchableOpacity>
 
-      {/* Add Participant Modal */}
-      <Overlay
-        isVisible={showAddParticipant}
-        onBackdropPress={() => setShowAddParticipant(false)}
-        overlayStyle={styles.modal}
+      <Modal
+        visible={showCreateRoom}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCreateRoom(false)}
       >
-        <Text h4 style={styles.modalTitle}>Add Participant</Text>
-        <Input
-          placeholder="Search by name or phone number..."
-          value={participantSearchQuery}
-          onChangeText={handleParticipantSearch}
-          autoFocus
-        />
-        {isSearching && (
-          <ActivityIndicator size="small" color="#007AFF" style={styles.searchIndicator} />
-        )}
-        <FlatList
-          data={searchResults}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
+        <View className="flex-1 bg-black/50 justify-center items-center">
+          <View className="bg-white w-11/12 rounded-lg p-6">
+            <Text className="text-xl font-bold mb-4 text-foreground">Create New Room</Text>
+            
+            <TextInput
+              className="bg-grey-5 px-4 py-3 rounded-lg text-foreground mb-4"
+              placeholder="Room Name"
+              placeholderTextColor="#86939e"
+              value={newRoomName}
+              onChangeText={setNewRoomName}
+            />
+
+            <TextInput
+              className="bg-grey-5 px-4 py-3 rounded-lg text-foreground mb-6"
+              placeholder="Description (optional)"
+              placeholderTextColor="#86939e"
+              value={newRoomDescription}
+              onChangeText={setNewRoomDescription}
+              multiline
+            />
+
+            <View className="flex-row justify-end space-x-4">
+              <TouchableOpacity
+                className="px-6 py-2"
+                onPress={() => setShowCreateRoom(false)}
+              >
+                <Text className="text-grey-2">Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                className={`bg-primary px-6 py-2 rounded-lg ${!newRoomName.trim() ? 'opacity-50' : ''}`}
+                onPress={handleCreateRoom}
+                disabled={!newRoomName.trim() || creatingRoom}
+              >
+                <Text className="text-white font-semibold">
+                  {creatingRoom ? 'Creating...' : 'Create'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showAddParticipant}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAddParticipant(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center">
+          <View className="bg-white w-11/12 rounded-lg p-6">
+            <Text className="text-xl font-bold mb-4 text-foreground">Add Participant</Text>
+            
+            <TextInput
+              className="bg-grey-5 px-4 py-3 rounded-lg text-foreground mb-4"
+              placeholder="Search users..."
+              placeholderTextColor="#86939e"
+              value={participantSearchQuery}
+              onChangeText={handleParticipantSearch}
+            />
+
+            {isSearching ? (
+              <ActivityIndicator color="#007AFF" />
+            ) : (
+              <FlatList
+                data={searchResults}
+                keyExtractor={item => item.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    className="py-3 border-b border-grey-5"
+                    onPress={() => handleParticipantSelect(item.id)}
+                  >
+                    <Text className="text-foreground">{item.name}</Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={renderSearchEmptyList}
+              />
+            )}
+
             <TouchableOpacity
-              style={styles.userItem}
-              onPress={() => handleParticipantSelect(item.id)}
+              className="mt-4 bg-grey-5 px-6 py-2 rounded-lg"
+              onPress={() => setShowAddParticipant(false)}
             >
-              <Text style={styles.userName}>{item.name || item.alias}</Text>
-              <Text style={styles.userPhone}>{item.phone_number}</Text>
+              <Text className="text-foreground text-center">Close</Text>
             </TouchableOpacity>
-          )}
-          style={styles.searchResults}
-          ListEmptyComponent={
-            !isSearching && participantSearchQuery.trim() ? (
-              <Text style={styles.emptyText}>No users found</Text>
-            ) : null
-          }
-        />
-      </Overlay>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -398,146 +476,67 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
+  searchContainer: {
+    padding: 16,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  searchContainer: {
-    flex: 1,
-    marginRight: 10,
+    borderBottomColor: '#e0e0e0',
   },
   searchInput: {
     backgroundColor: '#f5f5f5',
+    padding: 12,
     borderRadius: 8,
-    padding: 10,
     fontSize: 16,
   },
-  createButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    paddingHorizontal: 15,
+  roomList: {
+    padding: 16,
   },
-  list: {
-    padding: 10,
-  },
-  card: {
+  roomItem: {
     backgroundColor: '#fff',
+    padding: 16,
     borderRadius: 8,
-    marginBottom: 10,
-    padding: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+    elevation: 2,
   },
-  cardTitle: {
+  roomName: {
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '600',
+    marginBottom: 4,
   },
-  description: {
-    marginBottom: 10,
+  roomDescription: {
+    fontSize: 14,
     color: '#666',
   },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  timestamp: {
-    fontSize: 12,
-    color: '#999',
-  },
-  addButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 5,
-  },
-  addButtonText: {
-    color: '#fff',
-    fontSize: 12,
-  },
-  error: {
-    color: 'red',
+  errorText: {
+    color: '#ff3b30',
     textAlign: 'center',
-    margin: 10,
+    margin: 16,
   },
   emptyText: {
     textAlign: 'center',
     color: '#666',
-    marginTop: 20,
+    marginTop: 32,
   },
-  modal: {
-    width: '90%',
-    maxHeight: '80%',
-    padding: 20,
-    borderRadius: 10,
-  },
-  modalTitle: {
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  userItem: {
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  userPhone: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 5,
-  },
-  searchResults: {
-    maxHeight: 200,
-    marginTop: 10,
-  },
-  searchIndicator: {
-    marginVertical: 10,
-  },
-  unreadBadge: {
+  createButton: {
     backgroundColor: '#007AFF',
-    borderRadius: 12,
-    minWidth: 24,
-    height: 24,
-    justifyContent: 'center',
+    margin: 16,
+    padding: 16,
+    borderRadius: 8,
     alignItems: 'center',
-    paddingHorizontal: 8,
   },
-  unreadCount: {
+  createButtonDisabled: {
+    opacity: 0.5,
+  },
+  createButtonText: {
     color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  unreadPreview: {
-    backgroundColor: '#f0f0f0',
-    padding: 8,
-    borderRadius: 4,
-    marginVertical: 8,
-  },
-  unreadPreviewText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  messageStatus: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-    fontStyle: 'italic'
+    fontSize: 16,
+    fontWeight: '600',
   },
 }); 

@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
-import { Input, Button, Text } from 'react-native-elements';
+import { View, KeyboardAvoidingView, Platform, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { Text } from 'react-native-elements';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootStackParamList } from '../../navigation/types';
 import { LoginCredentials } from '../../types/auth';
-import { loginRequest, clearError } from '../../store/authSlice';
-import { RootState } from '../../store';
+import { loginRequest, clearError, clearAuthState } from '../../store/slices/authSlice';
+import { RootState } from '../../store/store';
 import { validation } from '../../utils/validation';
+import { logger } from '../../utils/logger';
+import { getTraceId } from '../../utils/trace';
 
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
@@ -17,10 +19,20 @@ interface ValidationErrors {
   password?: string;
 }
 
+interface AuthState {
+  loading: boolean;
+  error: string | null;
+  token: string | null;
+  user: {
+    id: string;
+    name: string;
+  } | null;
+}
+
 export const LoginScreen = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const dispatch = useDispatch();
-  const { loading, error } = useSelector((state: RootState) => state.auth);
+  const { loading, error } = useSelector((state: RootState & { auth: AuthState }) => state.auth);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
   const [credentials, setCredentials] = useState<LoginCredentials>({
     identifier: '',
@@ -28,43 +40,67 @@ export const LoginScreen = () => {
   });
 
   useEffect(() => {
-    // Clear any previous errors when component mounts
+    const traceId = getTraceId();
+    logger.info('Login screen mounted, clearing auth state', { traceId }, 'auth');
+    dispatch(clearAuthState());
     dispatch(clearError());
   }, [dispatch]);
 
   const validateForm = (): boolean => {
+    console.log('Starting form validation');
     const errors: ValidationErrors = {};
     
-    // Validate phone number
-    const phoneError = validation.phoneNumber(credentials.identifier);
-    if (phoneError) {
-      errors.identifier = phoneError;
+    // Phone validation
+    if (!credentials.identifier) {
+      errors.identifier = 'Phone number is required';
+    } else {
+      const phoneError = validation.phoneNumber(credentials.identifier);
+      console.log('Phone validation result:', phoneError);
+      if (phoneError) {
+        errors.identifier = phoneError;
+      }
     }
 
-    // Validate password
-    const passwordError = validation.required(credentials.password);
-    if (passwordError) {
-      errors.password = passwordError;
+    // Password validation
+    if (!credentials.password) {
+      errors.password = 'Password is required';
+    } else {
+      const passwordError = validation.required(credentials.password);
+      console.log('Password validation result:', passwordError);
+      if (passwordError) {
+        errors.password = passwordError;
+      }
     }
 
+    console.log('Final validation errors:', errors);
     setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    const isValid = Object.keys(errors).length === 0;
+    console.log('Form is valid:', isValid);
+    return isValid;
   };
 
   const handleSubmit = () => {
+    console.log('Login button pressed');
+    console.log('Current credentials:', {
+      identifier: credentials.identifier,
+      password: credentials.password ? '****' : ''
+    });
+    
     if (!validateForm()) {
+      console.log('Form validation failed. Errors:', validationErrors);
       return;
     }
+    
+    console.log('Form validation passed, dispatching login request');
     dispatch(loginRequest(credentials));
   };
 
   const handleInputChange = (field: keyof LoginCredentials, value: string) => {
+    console.log(`Input changed for ${field}:`, value);
     setCredentials(prev => ({ ...prev, [field]: value }));
-    // Clear validation error when user starts typing
     if (validationErrors[field]) {
       setValidationErrors(prev => ({ ...prev, [field]: undefined }));
     }
-    // Clear API error when user starts typing
     if (error) {
       dispatch(clearError());
     }
@@ -73,84 +109,77 @@ export const LoginScreen = () => {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      className="flex-1 bg-background"
     >
-      <View style={styles.content}>
-        <Text h3 style={styles.title}>Welcome Back</Text>
+      <View className="flex-1 px-6 justify-center">
+        <Text className="text-3xl font-bold text-center mb-8 text-foreground">
+          Welcome Back
+        </Text>
         
         {error && (
-          <Text style={styles.error}>{error}</Text>
+          <Text className="text-error text-center mb-4">{error}</Text>
         )}
 
-        <Input
-          placeholder="Phone Number"
-          value={credentials.identifier}
-          onChangeText={(text) => handleInputChange('identifier', text)}
-          autoCapitalize="none"
-          keyboardType="phone-pad"
-          disabled={loading}
-          errorMessage={validationErrors.identifier}
-          returnKeyType="next"
-          onSubmitEditing={() => {
-            // Focus the password input
-            const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
-            if (passwordInput) {
-              passwordInput.focus();
-            }
-          }}
-        />
+        <View className="mb-4">
+          <TextInput
+            className="bg-grey-5 px-4 py-3 rounded-lg text-foreground"
+            placeholder="Phone Number"
+            placeholderTextColor="#86939e"
+            value={credentials.identifier}
+            onChangeText={(text) => handleInputChange('identifier', text)}
+            autoCapitalize="none"
+            keyboardType="phone-pad"
+            editable={!loading}
+          />
+          {validationErrors.identifier && (
+            <Text className="text-error text-sm mt-1 font-bold">{validationErrors.identifier}</Text>
+          )}
+        </View>
 
-        <Input
-          placeholder="Password"
-          value={credentials.password}
-          onChangeText={(text) => handleInputChange('password', text)}
-          secureTextEntry
-          disabled={loading}
-          errorMessage={validationErrors.password}
-          returnKeyType="go"
-          onSubmitEditing={handleSubmit}
-        />
+        <View className="mb-6">
+          <TextInput
+            className="bg-grey-5 px-4 py-3 rounded-lg text-foreground"
+            placeholder="Password"
+            placeholderTextColor="#86939e"
+            value={credentials.password}
+            onChangeText={(text) => handleInputChange('password', text)}
+            secureTextEntry
+            editable={!loading}
+          />
+          {validationErrors.password && (
+            <Text className="text-error text-sm mt-1 font-bold">{validationErrors.password}</Text>
+          )}
+        </View>
 
-        <Button
-          title="Login"
+        {/* Debug display - remove in production */}
+        {Object.keys(validationErrors).length > 0 && (
+          <View className="mb-4 p-2 bg-red-100 rounded">
+            <Text className="text-error text-sm">
+              Validation Errors: {JSON.stringify(validationErrors)}
+            </Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          className={`bg-primary py-3 rounded-lg mb-4 ${loading ? 'opacity-50' : ''}`}
           onPress={handleSubmit}
-          loading={loading}
           disabled={loading}
-          containerStyle={styles.buttonContainer}
-        />
+        >
+          <Text className="text-white text-center font-semibold text-lg">
+            {loading ? 'Logging in...' : 'Login'}
+          </Text>
+        </TouchableOpacity>
 
-        <Button
-          title="Don't have an account? Sign up"
-          type="clear"
+        <TouchableOpacity
+          className="py-2"
           onPress={() => navigation.navigate('Signup')}
           disabled={loading}
-        />
+        >
+          <Text className="text-primary text-center">
+            Don't have an account? Sign up
+          </Text>
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
-};
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-    justifyContent: 'center',
-  },
-  title: {
-    textAlign: 'center',
-    marginBottom: 30,
-  },
-  error: {
-    color: 'red',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  buttonContainer: {
-    marginTop: 20,
-    marginBottom: 10,
-  },
-}); 
+}; 

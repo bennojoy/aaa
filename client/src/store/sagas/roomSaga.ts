@@ -10,11 +10,18 @@ import {
   addParticipantRequest,
   addParticipantSuccess,
   addParticipantFailure
-} from '../roomSlice';
+} from '../slices/roomSlice';
 import { logger } from '../../utils/logger';
 import { getTraceId } from '../../utils/trace';
 import { AxiosResponse } from 'axios';
-import { RoomList, CreateRoomParams, AddParticipantParams } from '../../types/room';
+import { Room, RoomList } from '../../types/room';
+
+type RoomParticipant = {
+  id: string;
+  name: string;
+  role: 'member' | 'admin';
+  status: 'active' | 'inactive';
+};
 
 /**
  * Handle room search request
@@ -25,45 +32,52 @@ import { RoomList, CreateRoomParams, AddParticipantParams } from '../../types/ro
  * @throws {Error} - If the API request fails
  */
 function* handleSearchRooms(action: ReturnType<typeof searchRoomsRequest>): Generator<any, void, AxiosResponse<any>> {
-  const { query, skip = 0, limit = 100 } = action.payload;
+  const { query } = action.payload;
   const traceId = getTraceId();
 
-  logger.info('Starting room search', { query, skip, limit, traceId }, 'room');
-
   try {
-    const response = yield call(apiClient.get, '/api/v1/rooms/search', {
-      params: { query, skip, limit }
+    logger.info('Searching rooms', { query, traceId }, 'room');
+    const response = yield call(apiClient.get, '/api/v1/rooms', {
+      params: { query }
     });
 
-    // Deduplicate rooms from API response
-    const uniqueRooms = (response.data.rooms || []).reduce((acc: any[], room: any) => {
-      if (!acc.find(r => r.id === room.id)) {
-        acc.push(room);
-      }
-      return acc;
-    }, []);
+    console.log('API Response:', {
+      data: response.data,
+      rooms: response.data.rooms,
+      total: response.data.total
+    });
 
-    // Transform the response to match the expected structure
-    const transformedData: RoomList = {
-      items: uniqueRooms,
-      total: uniqueRooms.length,
-      skip: skip,
-      limit: limit
+    // Transform response to match RoomList type
+    const roomList: RoomList = {
+      rooms: response.data.rooms || [],  // Use rooms array from response
+      total: response.data.total || 0,
+      trace_id: traceId
     };
 
-    logger.info('Room search successful', {
-      count: transformedData.items.length,
-      originalCount: response.data.rooms?.length || 0,
-      removedDuplicates: (response.data.rooms?.length || 0) - transformedData.items.length,
-      query,
-      traceId: response.data.trace_id
+    console.log('Transformed RoomList:', {
+      rooms: roomList.rooms,
+      total: roomList.total,
+      trace_id: roomList.trace_id
+    });
+
+    logger.info('Rooms search successful', {
+      total: roomList.total,
+      count: roomList.rooms.length,
+      traceId
     }, 'room');
 
-    yield put(searchRoomsSuccess(transformedData));
+    // Create the action
+    const successAction = searchRoomsSuccess(roomList);
+    console.log('Created success action:', successAction);
+
+    // Dispatch the action
+    yield put(successAction);
+
+    // Log after dispatch
+    console.log('Saga: Action dispatched, waiting for reducer');
   } catch (error: any) {
-    logger.error('Room search failed', {
+    logger.error('Rooms search failed', {
       error: error.message,
-      query,
       status: error.response?.status,
       traceId
     }, 'room');
@@ -80,26 +94,23 @@ function* handleCreateRoom(action: ReturnType<typeof createRoomRequest>): Genera
   const { name, description, type } = action.payload;
   const traceId = getTraceId();
 
-  logger.info('Creating new room', { name, type, traceId }, 'room');
-
   try {
+    logger.info('Creating room', { name, type, traceId }, 'room');
     const response = yield call(apiClient.post, '/api/v1/rooms', {
       name,
       description,
       type
     });
 
-    logger.info('Room created successfully', {
+    logger.info('Room created successfully', { 
       roomId: response.data.id,
-      name,
-      traceId: response.data.trace_id
+      traceId 
     }, 'room');
 
-    yield put(createRoomSuccess(response.data));
+    yield put(createRoomSuccess(response.data as Room));
   } catch (error: any) {
     logger.error('Room creation failed', {
       error: error.message,
-      name,
       status: error.response?.status,
       traceId
     }, 'room');
@@ -113,30 +124,35 @@ function* handleCreateRoom(action: ReturnType<typeof createRoomRequest>): Genera
  * Adds a user to a room with the specified role
  */
 function* handleAddParticipant(action: ReturnType<typeof addParticipantRequest>): Generator<any, void, AxiosResponse<any>> {
-  const { roomId, userId, role = 'member', status = 'active' } = action.payload;
+  const { roomId, userId } = action.payload;
   const traceId = getTraceId();
 
-  logger.info('Adding participant to room', { roomId, userId, role, traceId }, 'room');
-
   try {
+    logger.info('Adding participant to room', { roomId, userId, traceId }, 'room');
     const response = yield call(apiClient.post, `/api/v1/rooms/${roomId}/participants`, {
-      user_id: userId,
-      role,
-      status
+      user_id: userId
     });
 
-    logger.info('Participant added successfully', {
+    logger.info('Participant added successfully', { 
       roomId,
       userId,
-      traceId: response.data.trace_id
+      traceId 
     }, 'room');
 
-    yield put(addParticipantSuccess());
+    const participant: RoomParticipant = {
+      id: response.data.id,
+      name: response.data.name,
+      role: response.data.role || 'member',
+      status: response.data.status || 'active'
+    };
+
+    yield put(addParticipantSuccess({
+      roomId,
+      participant
+    }));
   } catch (error: any) {
     logger.error('Failed to add participant', {
       error: error.message,
-      roomId,
-      userId,
       status: error.response?.status,
       traceId
     }, 'room');

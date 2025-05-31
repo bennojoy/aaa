@@ -1,10 +1,10 @@
 import { Middleware, AnyAction } from 'redux';
 import { connect, connected, disconnected, error, messageReceived, messageSent, messageFailed } from '../mqttSlice';
 import { setConnectionStatus, addMessage } from '../chatSlice';
-import { mqttService } from '../../services/mqtt';
-import { logger } from '../../utils/logger';
-import { getTraceId } from '../../utils/trace';
-import { MQTT_CONFIG } from '../../config/mqtt';
+import { mqttService } from '../services/mqtt';
+import { logger } from '../utils/logger';
+import { getTraceId } from '../utils/trace';
+import { MQTT_CONFIG } from '../types/mqtt';
 import { MessageStatus } from '../../types/message';
 
 // Immediate logging

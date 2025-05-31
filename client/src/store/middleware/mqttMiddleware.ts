@@ -2,11 +2,14 @@ import { Middleware } from 'redux';
 import { mqttService } from '../../services/mqtt';
 import { logger } from '../../utils/logger';
 import { getTraceId } from '../../utils/trace';
-import { RootState } from '../store';
-import { messageReceived } from '../mqttSlice';
-import { addMessage, updateMessageStatus } from '../chatSlice';
+import { RootState, store } from '../../store/store';
+import { messageReceived } from '../slices/mqttSlice';
+import { addMessage, updateMessageStatus } from '../slices/chatSlice';
 import { Message } from '../../types/message';
-import { MQTT_CONFIG } from '../../config/mqtt';
+import { MQTT_CONFIG } from '../../types/mqtt';
+import mqttSlice from '../slices/mqttSlice';
+import { MqttClient } from 'mqtt';
+import { MqttMessage } from '../../types/mqtt';
 
 interface SendMessageAction {
   type: 'chat/sendMessage';

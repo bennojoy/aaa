@@ -4,7 +4,7 @@ import { useSelector } from 'react-redux';
 import { Message } from '../../types/message';
 import { getCurrentUserId } from '../../store/selectors/authSelectors';
 import { getMessageStatus } from '../../store/selectors/chatSelectors';
-import { RootState } from '../../store';
+import { RootState } from '../../store/store';
 
 interface MessageBubbleProps {
   message: Message;

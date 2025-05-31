@@ -25,16 +25,17 @@ axiosInstance.interceptors.request.use(
       config.headers['Authorization'] = `Bearer ${token}`;
     }
 
-    logger.debug('API Request', {
-      url: config.url,
+    console.log('API Request:', {
+      url: `${config.baseURL}${config.url}`,
       method: config.method,
+      data: config.data,
+      headers: config.headers,
       traceId,
-      hasAuth: !!token,
-    }, 'api');
+    });
     return config;
   },
   (error) => {
-    logger.error('API Request Error', error, 'api');
+    console.error('API Request Error:', error);
     return Promise.reject(error);
   }
 );
@@ -43,21 +44,23 @@ axiosInstance.interceptors.request.use(
 axiosInstance.interceptors.response.use(
   (response) => {
     const traceId = response.headers['x-trace-id'];
-    logger.debug('API Response', {
+    console.log('API Response:', {
       url: response.config.url,
       status: response.status,
+      data: response.data,
       traceId,
-    }, 'api');
+    });
     return response;
   },
   (error) => {
     const traceId = error.response?.headers?.['x-trace-id'];
-    logger.error('API Response Error', {
+    console.error('API Response Error:', {
       url: error.config?.url,
       status: error.response?.status,
+      data: error.response?.data,
       error: error.message,
       traceId,
-    }, 'api');
+    });
     return Promise.reject(error);
   }
 );

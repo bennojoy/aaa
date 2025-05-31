@@ -4,9 +4,18 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "*": ["src/*"]
+      "@/*": [
+        "src/*"
+      ]
     },
-    "lib": ["ES2015", "DOM"],
+    "typeRoots": [
+      "./src/types",
+      "./node_modules/@types"
+    ],
+    "lib": [
+      "ES2015",
+      "DOM"
+    ],
     "target": "ES2015",
     "module": "ESNext",
     "moduleResolution": "node",
@@ -21,9 +30,10 @@
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    "nativewind-env.d.ts"
   ],
   "exclude": [
     "node_modules"
   ]
-} 
+}

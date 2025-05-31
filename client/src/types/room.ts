@@ -13,9 +13,24 @@ export interface Room {
   /** ISO timestamp when the room was created */
   created_at: string;
   /** ISO timestamp when the room was last updated */
-  updated_at: string;
-  /** ID of the user who owns the room */
-  owner_id: string;
+  updated_at: string | null;
+  /** ID of the user who created the room */
+  created_by: string;
+  /** Whether this is a default room */
+  is_default: boolean;
+  /** Name of the assistant in the room */
+  assistant_name: string;
+  /** List of participants in the room */
+  participants?: Array<{
+    /** User ID */
+    id: string;
+    /** User's name */
+    name: string;
+    /** User's role in the room */
+    role: 'member' | 'admin';
+    /** User's status in the room */
+    status: 'active' | 'inactive';
+  }>;
 }
 
 /**
@@ -23,13 +38,11 @@ export interface Room {
  */
 export interface RoomList {
   /** Array of room objects */
-  items: Room[];
+  rooms: Room[];
   /** Total number of rooms matching the query */
   total: number;
-  /** Number of rooms skipped (for pagination) */
-  skip: number;
-  /** Maximum number of rooms returned */
-  limit: number;
+  /** Optional trace ID for request tracking */
+  trace_id?: string;
 }
 
 /**

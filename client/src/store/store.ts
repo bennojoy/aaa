@@ -3,10 +3,10 @@ import createSagaMiddleware from 'redux-saga';
 import { all } from 'redux-saga/effects';
 import { persistStore, persistReducer } from 'redux-persist';
 import storage from 'redux-persist/lib/storage';
-import authReducer from './authSlice';
-import roomReducer from './roomSlice';
-import chatReducer from './chatSlice';
-import mqttReducer from './mqttSlice';
+import authReducer from './slices/authSlice';
+import roomReducer from './slices/roomSlice';
+import chatReducer from './slices/chatSlice';
+import mqttReducer from './slices/mqttSlice';
 import { authSaga } from './sagas/authSaga';
 import { roomSaga } from './sagas/roomSaga';
 import { chatSaga } from './sagas/chatSaga';
@@ -32,27 +32,43 @@ function* rootSaga() {
 const authPersistConfig = {
   key: 'auth',
   storage,
-  whitelist: ['user', 'token']
+  whitelist: ['user', 'token', 'isAuthenticated']
+};
+
+const roomPersistConfig = {
+  key: 'rooms',
+  storage,
+  whitelist: ['rooms', 'total'],
+  transforms: [
+    createTransform(
+      // transform state on its way to being serialized and persisted
+      (inboundState: any) => {
+        console.log('Persisting room state:', inboundState);
+        return {
+          rooms: inboundState.rooms || [],
+          total: inboundState.total || 0
+        };
+      },
+      // transform state being rehydrated
+      (outboundState: any) => {
+        console.log('Rehydrating room state:', outboundState);
+        return {
+          rooms: outboundState?.rooms || [],
+          total: outboundState?.total || 0,
+          loading: false,
+          error: null,
+          creatingRoom: false,
+          addingParticipant: false
+        };
+      }
+    )
+  ]
 };
 
 const chatPersistConfig = {
   key: 'chat',
   storage,
-  whitelist: ['messages'],
-  transforms: [
-    createTransform(
-      // transform state on its way to being serialized and persisted
-      (inboundState: any) => {
-        return inboundState;
-      },
-      // transform state being rehydrated
-      (outboundState: any) => {
-        return outboundState;
-      },
-      // define which reducers this transform gets called for
-      { whitelist: ['messages'] }
-    )
-  ]
+  whitelist: ['messages']
 };
 
 const mqttPersistConfig = {
@@ -63,14 +79,23 @@ const mqttPersistConfig = {
 
 // Create persisted reducers
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);
+const persistedRoomReducer = persistReducer(roomPersistConfig, roomReducer);
 const persistedChatReducer = persistReducer(chatPersistConfig, chatReducer);
 const persistedMqttReducer = persistReducer(mqttPersistConfig, mqttReducer);
+
+// Log reducer registration
+console.log('Reducers registered:', {
+  auth: !!persistedAuthReducer,
+  rooms: !!persistedRoomReducer,
+  chat: !!persistedChatReducer,
+  mqtt: !!persistedMqttReducer
+});
 
 // Create store
 export const store = configureStore({
   reducer: {
     auth: persistedAuthReducer,
-    rooms: roomReducer,
+    rooms: persistedRoomReducer, // Use persisted reducer
     chat: persistedChatReducer,
     mqtt: persistedMqttReducer
   },
@@ -78,14 +103,26 @@ export const store = configureStore({
     getDefaultMiddleware({
       serializableCheck: {
         ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER]
-      }
+      },
+      immutableCheck: false
     }).concat(sagaMiddleware, mqttMiddleware),
-  devTools: process.env.NODE_ENV !== 'production'
+  devTools: true
 });
 
 // Create persistor
-export const persistor = persistStore(store, null, () => {
-  logger.info('State rehydration complete', { traceId: getTraceId() }, 'store');
+export const persistor = persistStore(store);
+
+// Log initial state
+console.log('Initial store state:', store.getState());
+
+// Add store subscription for debugging
+store.subscribe(() => {
+  const currentState = store.getState();
+  console.log('Store state updated:', {
+    rooms: currentState.rooms,
+    action: currentState.rooms?.rooms,
+    total: currentState.rooms?.total
+  });
 });
 
 // Run saga middleware

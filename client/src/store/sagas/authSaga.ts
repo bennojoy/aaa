@@ -8,8 +8,12 @@ import {
   signupFailure,
   logout,
   clearAuthState,
-} from '../authSlice';
-import { disconnected, connect, setUserId } from '../mqttSlice';
+} from '../slices/authSlice';
+import { 
+  disconnected as mqttDisconnected, 
+  connect as connectMQTT, 
+  setUserId 
+} from '../slices/mqttSlice';
 import { apiClient } from '../../api/client';
 import { storage } from '../../utils/storage';
 import { logger } from '../../utils/logger';
@@ -34,12 +38,14 @@ function* handleLogin(action: ReturnType<typeof loginRequest>): Generator<any, v
   const { identifier, password } = action.payload;
   const traceId = getTraceId();
 
-  logger.info('Login attempt', { identifier, traceId }, 'auth');
+  console.log('Login saga started', { identifier, traceId });
 
   try {
     // Clear any existing auth state first
     yield put(clearAuthState());
+    console.log('Cleared existing auth state');
 
+    console.log('Making API call to /api/v1/auth/signin');
     const response: AxiosResponse<AuthResponse> = yield call(
       apiClient.post,
       '/api/v1/auth/signin',
@@ -48,14 +54,17 @@ function* handleLogin(action: ReturnType<typeof loginRequest>): Generator<any, v
         password,
       }
     );
+    console.log('API call response:', response.data);
 
     const { access_token, user_id } = response.data;
     
     if (!access_token) {
+      console.error('No access token in response');
       throw new Error('No access token received');
     }
 
     if (!user_id) {
+      console.error('No user ID in response');
       throw new Error('No user ID received');
     }
 
@@ -67,40 +76,36 @@ function* handleLogin(action: ReturnType<typeof loginRequest>): Generator<any, v
       updated_at: new Date().toISOString()
     };
 
+    console.log('Storing token and user data');
     // Store token and user data
     yield call([storage, 'setToken'], access_token);
     yield call([storage, 'setUserData'], user);
     
-    logger.info('Login successful', { identifier, userId: user_id }, 'auth');
-
+    console.log('Login successful, dispatching success action');
     // First dispatch login success
     yield put(loginSuccess({ user, access_token }));
 
     // Wait for auth state to be updated
     const authState = yield select(getAuthState);
+    console.log('Auth state after login:', authState);
+    
     if (!authState.user || !authState.token) {
+      console.error('Auth state not properly updated:', authState);
       throw new Error('Auth state not properly updated');
     }
 
+    console.log('Initializing MQTT connection');
     // Initialize MQTT connection after login success
-    logger.info('Dispatching MQTT initialization', { 
-      userId: user_id,
-      hasToken: !!access_token,
-      traceId
-    }, 'auth');
-    
     yield put(initializeMqtt({ token: access_token, userId: user_id }));
-    logger.info('MQTT initialization dispatched', { 
-      userId: user_id,
-      traceId
-    }, 'auth');
+    console.log('MQTT initialization dispatched');
 
   } catch (error: any) {
-    logger.error('Login failed', {
+    console.error('Login failed:', {
       error: error.message,
       status: error.response?.status,
+      data: error.response?.data,
       traceId
-    }, 'auth');
+    });
 
     yield put(loginFailure(error.response?.data?.detail || 'Login failed'));
   }
@@ -222,7 +227,7 @@ function* handleRehydration(): Generator<any, void, any> {
 
     // Always force a new MQTT connection on rehydration
     logger.info('Resetting MQTT state to disconnected', { traceId }, 'auth');
-    yield put(disconnected()); // Reset MQTT state first
+    yield put(mqttDisconnected()); // Reset MQTT state first
     
     // Wait for state to be updated
     yield new Promise(resolve => setTimeout(resolve, 500));
@@ -255,7 +260,7 @@ function* handleRehydration(): Generator<any, void, any> {
       currentState: updatedMqttState
     }, 'auth');
     
-    yield put(connect({ 
+    yield put(connectMQTT({ 
       token, 
       userId: authState.user.id 
     }));

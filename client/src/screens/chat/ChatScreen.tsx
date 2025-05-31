@@ -2,35 +2,64 @@ import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { View, StyleSheet, FlatList, KeyboardAvoidingView, Platform, Text, TouchableOpacity, TextInput, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { RouteProp, useRoute, useFocusEffect, useNavigation } from '@react-navigation/native';
-import { RootState } from '../../store';
+import { RootState } from '../../store/store';
 import { getRoomMessages, getConnectionStatus } from '../../store/selectors/chatSelectors';
-import { markRoomAsRead, addMessage, updateMessageStatus } from '../../store/chatSlice';
-import { connect } from '../../store/mqttSlice';
+import { 
+  addMessage, 
+  updateMessageStatus, 
+  markRoomAsRead,
+  setConnectionStatus
+} from '../../store/slices/chatSlice';
+import { connect as connectMQTT } from '../../store/slices/mqttSlice';
 import { logger } from '../../utils/logger';
 import { mqttService } from '../../services/mqtt';
 import { getTraceId } from '../../utils/trace';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { RootStackParamList } from '../../navigation/types';
-import { MQTT_CONFIG } from '../../config/mqtt';
+import { MQTT_CONFIG } from '../../types/mqtt';
 import { v4 as uuidv4 } from 'uuid';
 import { getMessageHistory } from '../../utils/messageFormat';
-import { Message } from '../../types/message';
+import { Message, generateMessageId, generateTraceId } from '../../types/message';
 import { MessageWithHistory } from '../../types/chat';
+import { WebRTCService } from '../../services/webrtcService';
+import { basicAgent } from '../../config/agentConfig';
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
+
+interface ChatState {
+  messages: { [key: string]: Message[] };
+  loading: boolean;
+  error: string | null;
+}
+
+interface MQTTState {
+  connectionStatus: 'connected' | 'disconnected' | 'connecting';
+  currentUserId: string | null;
+}
+
+interface AuthState {
+  token: string | null;
+  user: {
+    id: string;
+    name: string;
+  } | null;
+}
 
 export const ChatScreen = () => {
   const route = useRoute<ChatScreenRouteProp>();
   const navigation = useNavigation();
   const { roomId, roomType, roomName } = route.params;
   const dispatch = useDispatch();
-  const { currentUserId } = useSelector((state: RootState) => state.mqtt);
+  const { currentUserId } = useSelector((state: RootState & { mqtt: MQTTState }) => state.mqtt);
   const messages = useSelector(getRoomMessages(roomId));
   const connectionStatus = useSelector(getConnectionStatus);
-  const { token, user } = useSelector((state: RootState) => state.auth);
+  const { token, user } = useSelector((state: RootState & { auth: AuthState }) => state.auth);
   const [newMessage, setNewMessage] = useState('');
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
   const flatListRef = useRef<FlatList>(null);
+  const [isCallActive, setIsCallActive] = useState(false);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const webrtcService = useRef<WebRTCService | null>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -60,7 +89,7 @@ export const ChatScreen = () => {
           recentHistory: connectionHistory.slice(-3) // Last 3 connection events
         }, 'mqtt');
         
-        dispatch(connect({ token, userId: user.id }));
+        dispatch(connectMQTT({ token, userId: user.id }));
       }
 
       // Mark messages as read when component mounts or screen comes into focus
@@ -91,70 +120,137 @@ export const ChatScreen = () => {
     }
   }, [dispatch, roomId, currentUserId]);
 
-  const handleSend = () => {
-    if (!newMessage.trim()) return;
-
-    // Check if MQTT is actually connected
-    if (!mqttService.isConnected()) {
-      logger.warn('MQTT not connected, attempting to reconnect', {
-        roomId,
-        userId: currentUserId,
-        traceId: getTraceId()
-      }, 'chat');
-
-      // Attempt to reconnect
-      if (token && user?.id) {
-        dispatch(connect({ token, userId: user.id }));
+  useEffect(() => {
+    // Initialize WebRTC service
+    webrtcService.current = new WebRTCService(audioElementRef);
+    
+    // Set up message callback
+    webrtcService.current.setMessageCallback((event) => {
+      console.log('Received event in ChatScreen:', event);
+      
+      switch (event.type) {
+        case 'conversation.item.create':
+          if (event.item?.role === 'assistant') {
+            const messageId = generateMessageId();
+            const message: Message = {
+              id: messageId,
+              content: event.item.content[0].text,
+              room_id: roomId,
+              room_type: 'assistant',
+              sender_id: 'assistant',
+              timestamp: new Date().toISOString(),
+              client_timestamp: new Date().toISOString(),
+              status: 'sent',
+              trace_id: generateTraceId(messageId),
+              assistant_name: 'Assistant'
+            };
+            dispatch(addMessage({ roomId, message }));
+          }
+          break;
+          
+        case 'transcription':
+          // Add transcription as a user message
+          const messageId = generateMessageId();
+          const message: Message = {
+            id: messageId,
+            content: event.text,
+            room_id: roomId,
+            room_type: 'user',
+            sender_id: user?.id || 'user',
+            timestamp: new Date().toISOString(),
+            client_timestamp: new Date().toISOString(),
+            status: 'sent',
+            trace_id: generateTraceId(messageId)
+          };
+          dispatch(addMessage({ roomId, message }));
+          break;
       }
-      return;
+    });
+
+    return () => {
+      if (isCallActive) {
+        webrtcService.current?.endCall();
+      }
+    };
+  }, [dispatch, roomId, user?.id]);
+
+  const handleCallToggle = async () => {
+    if (isCallActive) {
+      // End call
+      await webrtcService.current?.endCall();
+      setIsCallActive(false);
+    } else {
+      try {
+        // Start call using token from Redux store
+        await webrtcService.current?.startCall(basicAgent.instructions);
+        setIsCallActive(true);
+      } catch (error) {
+        console.error('Failed to start call:', error);
+      }
     }
+  };
 
-    const messageId = uuidv4();
-    const timestamp = new Date().toISOString();
-    const isAIMessage = roomType === 'assistant' || newMessage.startsWith('@ai');
+  const handleSend = () => {
+    if (!newMessage.trim() || !user?.id) return;
 
-    // Get message history if needed
-    const history = isAIMessage 
-      ? getMessageHistory(
-          messages, 
-          currentUserId || '', 
-          MQTT_CONFIG.messageHistory.maxMessages,
-          roomType,
-          newMessage
-        )
-      : null;
-
-    const message: MessageWithHistory = {
+    const messageId = generateMessageId();
+    const message: Message = {
       id: messageId,
       content: newMessage.trim(),
       room_id: roomId,
-      room_type: roomType as 'user' | 'assistant',
-      sender_id: currentUserId || '',
-      trace_id: getTraceId(),
-      timestamp: timestamp,
-      client_timestamp: timestamp,
-      status: 'sending' as const,
-      history,
-      ...(roomType === 'assistant' ? { assistant_name: 'Assistant' } : {})
+      room_type: roomType,
+      sender_id: user.id,
+      timestamp: new Date().toISOString(),
+      client_timestamp: new Date().toISOString(),
+      status: 'sending',
+      trace_id: generateTraceId(messageId)
     };
 
-    // Add message to Redux immediately
+    if (isCallActive && webrtcService.current) {
+      // Send message through WebRTC when call is active
+      webrtcService.current.sendEvent({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: newMessage.trim() }]
+        }
+      });
+      // Trigger response
+      webrtcService.current.sendEvent({ type: 'response.create' });
+    } else {
+      // Send message through MQTT when no call is active
+      const mqttMessage = {
+        type: 'message',
+        room_id: roomId,
+        room_type: roomType,
+        content: newMessage.trim(),
+        sender_id: user.id,
+        timestamp: new Date().toISOString(),
+        trace_id: message.trace_id
+      };
+      // Use the configured topic format
+      mqttService.publish(`messages/to_room/${roomId}`, JSON.stringify(mqttMessage));
+    }
+
+    // Add message to local state
     dispatch(addMessage({ roomId, message }));
 
-    // Publish to MQTT
-    mqttService.publish(MQTT_CONFIG.topics.publish.messages, JSON.stringify(message))
-      .catch(error => {
-        logger.error('Failed to send message', {
-          error,
-          roomId,
-          messageId
-        }, 'chat');
-        // Update message status to failed
-        dispatch(updateMessageStatus({ messageId, status: 'failed' }));
-      });
-
+    // Clear input
     setNewMessage('');
   };
+
+  const renderMessage = ({ item }: { item: Message }) => (
+    <View style={[
+      styles.messageContainer,
+      item.sender_id === user?.id ? styles.userMessage : styles.aiMessage
+    ]}>
+      <Text style={styles.messageText}>{item.content}</Text>
+      <Text style={styles.timestamp}>
+        {new Date(item.timestamp).toLocaleTimeString()}
+      </Text>
+    </View>
+  );
 
   return (
     <KeyboardAvoidingView 
@@ -172,17 +268,7 @@ export const ChatScreen = () => {
       <FlatList
         ref={flatListRef}
         data={messages}
-        renderItem={({ item }) => (
-          <View style={[
-            styles.messageContainer,
-            item.sender_id === currentUserId ? styles.sentMessage : styles.receivedMessage
-          ]}>
-            <Text style={styles.messageText}>{item.content}</Text>
-            <Text style={styles.messageTime}>
-              {new Date(item.timestamp || item.created_at).toLocaleTimeString()}
-            </Text>
-          </View>
-        )}
+        renderItem={renderMessage}
         keyExtractor={item => item.id}
         contentContainerStyle={styles.messageList}
         onScroll={handleScroll}
@@ -205,19 +291,32 @@ export const ChatScreen = () => {
       )}
 
       <View style={styles.inputContainer}>
+        <TouchableOpacity 
+          style={[styles.callButton, isCallActive && styles.callButtonActive]}
+          onPress={handleCallToggle}
+        >
+          <Icon 
+            name={isCallActive ? "call-end" : "call"} 
+            size={24} 
+            color={isCallActive ? "#fff" : "#007AFF"} 
+          />
+        </TouchableOpacity>
+
         <TextInput
           style={styles.input}
           value={newMessage}
           onChangeText={setNewMessage}
           placeholder="Type a message..."
+          placeholderTextColor="#86939e"
           multiline
         />
+
         <TouchableOpacity 
-          style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]} 
+          style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
           onPress={handleSend}
           disabled={!newMessage.trim()}
         >
-          <Icon name="send" size={24} color={newMessage.trim() ? "#007AFF" : "#ccc"} />
+          <Icon name="send" size={24} color={newMessage.trim() ? "#007AFF" : "#86939e"} />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -235,15 +334,15 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#e0e0e0',
   },
   backButton: {
-    padding: 8,
+    marginRight: 16,
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    marginLeft: 16,
+    fontWeight: '600',
+    color: '#000',
   },
   messageList: {
     padding: 16,
@@ -254,66 +353,77 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 8,
   },
-  sentMessage: {
+  userMessage: {
     alignSelf: 'flex-end',
     backgroundColor: '#007AFF',
   },
-  receivedMessage: {
+  aiMessage: {
     alignSelf: 'flex-start',
-    backgroundColor: '#E5E5EA',
+    backgroundColor: '#fff',
   },
   messageText: {
     fontSize: 16,
     color: '#000',
   },
-  messageTime: {
+  timestamp: {
     fontSize: 12,
-    color: '#666',
+    color: '#86939e',
     marginTop: 4,
-    alignSelf: 'flex-end',
-  },
-  scrollToBottomButton: {
-    position: 'absolute',
-    right: 20,
-    bottom: 80,
-    backgroundColor: '#007AFF',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
+    padding: 8,
     backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: '#e0e0e0',
   },
   input: {
     flex: 1,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    marginRight: 8,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginHorizontal: 8,
     maxHeight: 100,
+    color: '#000',
   },
   sendButton: {
-    padding: 12,
+    padding: 8,
   },
   sendButtonDisabled: {
     opacity: 0.5,
   },
+  callButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#f5f5f5',
+  },
+  callButtonActive: {
+    backgroundColor: '#ff3b30',
+  },
+  scrollToBottomButton: {
+    position: 'absolute',
+    right: 16,
+    bottom: 80,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
   emptyText: {
     textAlign: 'center',
-    marginTop: 16,
-    color: '#666',
+    color: '#86939e',
+    marginTop: 32,
   },
 }); 

@@ -1,13 +1,13 @@
-import { RootState } from '../index';
+import { RootState } from '../store';
 import { Message } from '../../types/message';
 
-export const getRoomMessages = (roomId: string) => (state: RootState) => {
+export const getRoomMessages = (roomId: string) => (state: RootState): Message[] => {
   const roomMessages = state.chat.messages[roomId];
   if (!roomMessages) return [];
 
   // Convert messages object to array and sort by timestamp
-  return Object.values(roomMessages.items)
-    .sort((a, b) => new Date(a.client_timestamp).getTime() - new Date(b.client_timestamp).getTime());
+  const messages = Object.values(roomMessages.items) as Message[];
+  return messages.sort((a, b) => new Date(a.client_timestamp).getTime() - new Date(b.client_timestamp).getTime());
 };
 
 export const getRoomUnreadCount = (roomId: string) => (state: RootState) => {
@@ -22,11 +22,11 @@ export const getLastUnreadMessage = (roomId: string) => (state: RootState) => {
   if (!currentUserId) return null;
 
   // Get all messages and sort by timestamp in descending order
-  const messages = Object.values(roomMessages.items)
-    .sort((a, b) => new Date(b.client_timestamp).getTime() - new Date(a.client_timestamp).getTime());
+  const messages = Object.values(roomMessages.items) as Message[];
+  const sortedMessages = messages.sort((a, b) => new Date(b.client_timestamp).getTime() - new Date(a.client_timestamp).getTime());
 
   // Find the first unread message that is not from the current user
-  return messages.find(msg => 
+  return sortedMessages.find(msg => 
     msg.status === 'delivered' && msg.sender_id !== currentUserId
   ) || null;
 };

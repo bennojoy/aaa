@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
-import { Input, Button, Text } from 'react-native-elements';
+import { View, KeyboardAvoidingView, Platform, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { Text } from 'react-native-elements';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootStackParamList } from '../../navigation/types';
 import { SignupData } from '../../types/auth';
-import { signupRequest, clearError } from '../../store/authSlice';
-import { RootState } from '../../store';
+import { signupRequest, clearError, clearAuthState } from '../../store/slices/authSlice';
+import { RootState } from '../../store/store';
 import { validation } from '../../utils/validation';
 import { logger } from '../../utils/logger';
+import { getTraceId } from '../../utils/trace';
 
 type SignupScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Signup'>;
 
@@ -18,27 +19,37 @@ interface ValidationErrors {
   password?: string;
 }
 
+interface AuthState {
+  loading: boolean;
+  error: string | null;
+  token: string | null;
+  user: {
+    id: string;
+    name: string;
+  } | null;
+}
+
 export const SignupScreen = () => {
   const navigation = useNavigation<SignupScreenNavigationProp>();
   const dispatch = useDispatch();
-  const { loading, error } = useSelector((state: RootState) => state.auth);
+  const { loading, error } = useSelector((state: RootState & { auth: AuthState }) => state.auth);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
   const [signupData, setSignupData] = useState<SignupData>({
     phone_number: '',
     password: ''
   });
   const [showSuccess, setShowSuccess] = useState(false);
-  const passwordInputRef = useRef<any>(null);
+  const passwordInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    // Clear any previous errors when component mounts
+    const traceId = getTraceId();
+    logger.info('Signup screen mounted, clearing auth state', { traceId }, 'auth');
+    dispatch(clearAuthState());
     dispatch(clearError());
   }, [dispatch]);
 
-  // Handle successful signup
   useEffect(() => {
     if (!loading && !error && showSuccess) {
-      // Navigate to login screen after a short delay
       const timer = setTimeout(() => {
         navigation.navigate('Login');
       }, 2000);
@@ -49,13 +60,11 @@ export const SignupScreen = () => {
   const validateForm = (): boolean => {
     const errors: ValidationErrors = {};
     
-    // Validate phone number
     const phoneError = validation.phoneNumber(signupData.phone_number);
     if (phoneError) {
       errors.phone_number = phoneError;
     }
 
-    // Validate password
     const passwordError = validation.required(signupData.password);
     if (passwordError) {
       errors.password = passwordError;
@@ -78,11 +87,9 @@ export const SignupScreen = () => {
 
   const handleInputChange = (field: keyof SignupData, value: string) => {
     setSignupData(prev => ({ ...prev, [field]: value }));
-    // Clear validation error when user starts typing
     if (validationErrors[field]) {
       setValidationErrors(prev => ({ ...prev, [field]: undefined }));
     }
-    // Clear API error when user starts typing
     if (error) {
       dispatch(clearError());
     }
@@ -91,90 +98,81 @@ export const SignupScreen = () => {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      className="flex-1 bg-background"
     >
-      <View style={styles.content}>
-        <Text h3 style={styles.title}>Create Account</Text>
+      <View className="flex-1 px-6 justify-center">
+        <Text className="text-3xl font-bold text-center mb-8 text-foreground">
+          Create Account
+        </Text>
         
         {error && (
-          <Text style={styles.error}>{error}</Text>
+          <Text className="text-error text-center mb-4">{error}</Text>
         )}
 
         {showSuccess && !error && !loading && (
-          <Text style={styles.success}>Account created successfully! Redirecting to login...</Text>
+          <Text className="text-success text-center mb-4">
+            Account created successfully! Redirecting to login...
+          </Text>
         )}
 
-        <Input
-          placeholder="Phone Number"
-          value={signupData.phone_number}
-          onChangeText={(text) => handleInputChange('phone_number', text)}
-          autoCapitalize="none"
-          keyboardType="phone-pad"
-          disabled={loading}
-          errorMessage={validationErrors.phone_number}
-          returnKeyType="next"
-          onSubmitEditing={() => {
-            passwordInputRef.current?.focus();
-          }}
-        />
+        <View className="mb-4">
+          <TextInput
+            className="bg-grey-5 px-4 py-3 rounded-lg text-foreground"
+            placeholder="Phone Number"
+            placeholderTextColor="#86939e"
+            value={signupData.phone_number}
+            onChangeText={(text) => handleInputChange('phone_number', text)}
+            autoCapitalize="none"
+            keyboardType="phone-pad"
+            editable={!loading}
+            returnKeyType="next"
+            onSubmitEditing={() => {
+              passwordInputRef.current?.focus();
+            }}
+          />
+          {validationErrors.phone_number && (
+            <Text className="text-error text-sm mt-1">{validationErrors.phone_number}</Text>
+          )}
+        </View>
 
-        <Input
-          ref={passwordInputRef}
-          placeholder="Password"
-          value={signupData.password}
-          onChangeText={(text) => handleInputChange('password', text)}
-          secureTextEntry
-          disabled={loading}
-          errorMessage={validationErrors.password}
-          returnKeyType="go"
-          onSubmitEditing={handleSubmit}
-        />
+        <View className="mb-6">
+          <TextInput
+            ref={passwordInputRef}
+            className="bg-grey-5 px-4 py-3 rounded-lg text-foreground"
+            placeholder="Password"
+            placeholderTextColor="#86939e"
+            value={signupData.password}
+            onChangeText={(text) => handleInputChange('password', text)}
+            secureTextEntry
+            editable={!loading}
+            returnKeyType="go"
+            onSubmitEditing={handleSubmit}
+          />
+          {validationErrors.password && (
+            <Text className="text-error text-sm mt-1">{validationErrors.password}</Text>
+          )}
+        </View>
 
-        <Button
-          title="Sign Up"
+        <TouchableOpacity
+          className={`bg-primary py-3 rounded-lg mb-4 ${loading ? 'opacity-50' : ''}`}
           onPress={handleSubmit}
-          loading={loading}
           disabled={loading}
-          containerStyle={styles.buttonContainer}
-        />
+        >
+          <Text className="text-white text-center font-semibold text-lg">
+            {loading ? 'Creating Account...' : 'Sign Up'}
+          </Text>
+        </TouchableOpacity>
 
-        <Button
-          title="Already have an account? Sign in"
-          type="clear"
+        <TouchableOpacity
+          className="py-2"
           onPress={() => navigation.navigate('Login')}
           disabled={loading}
-        />
+        >
+          <Text className="text-primary text-center">
+            Already have an account? Sign in
+          </Text>
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
-};
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-    justifyContent: 'center',
-  },
-  title: {
-    textAlign: 'center',
-    marginBottom: 30,
-  },
-  error: {
-    color: 'red',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  success: {
-    color: 'green',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  buttonContainer: {
-    marginTop: 20,
-    marginBottom: 10,
-  },
-}); 
+}; 

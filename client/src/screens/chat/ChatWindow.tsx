@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react';
-import { connect } from '../../store/mqttSlice';
+import { connect } from '../../store/slices/mqttSlice';
 import { storage } from '../../utils/storage';
 import { logger } from '../../utils/logger';
 import { getTraceId } from '../../utils/trace';
-import { store } from '../../store';
+import { store } from '../../store/store';
 import { useSelector } from 'react-redux';
 import { mqttService } from '../../services/mqtt';
 

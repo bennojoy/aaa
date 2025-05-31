@@ -1,5 +1,5 @@
 import mqtt, { IClientOptions, MqttClient, MqttProtocol } from 'mqtt';
-import { MQTT_CONFIG } from '../config/mqtt';
+import { MQTT_CONFIG, ConnectionStatus, ConnectionCallbacks, ConnectionHistory } from '../types/mqtt';
 import { logger } from '../utils/logger';
 import { AppState, AppStateStatus } from 'react-native';
 import { getTraceId } from '../utils/trace';
@@ -11,24 +11,8 @@ console.log('MQTT library connect function:', mqtt.connect);
 // Log MQTT service initialization
 console.log('Initializing MQTT service');
 
-type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error' | 'retry_limit_reached';
-
 type ConnectionStatusCallback = (status: ConnectionStatus) => void;
 type DisconnectedCallback = () => void;
-
-interface ConnectionHistory {
-  timestamp: number;
-  status: ConnectionStatus;
-  reason?: string;
-  latency?: number;
-}
-
-interface ConnectionCallbacks {
-  onConnectionStatusChange?: (status: ConnectionStatus) => void;
-  onDisconnected?: () => void;
-  onMessage?: (topic: string, message: string) => void;
-  onError?: (error: Error) => void;
-}
 
 interface MQTTService {
   connect(params: { token: string; userId: string }): Promise<void>;
@@ -319,7 +303,7 @@ class MQTTServiceImpl implements MQTTService {
         }, MQTT_CONFIG.connectTimeout);
 
         // Set up event handlers
-        this.client.on('connect', () => {
+        this.client.on('connect', async () => {
           clearTimeout(connectionTimeout);
           this.retryCount = 0;
           this.lastError = null;
@@ -333,6 +317,15 @@ class MQTTServiceImpl implements MQTTService {
             url: MQTT_CONFIG.brokerUrl,
             traceId
           }, 'mqtt');
+
+          // Subscribe to user's message topic
+          try {
+            const userTopic = MQTT_CONFIG.topics.subscribe.user(userId);
+            await this.subscribe(userTopic);
+            logger.info('Subscribed to user topic', { topic: userTopic, traceId }, 'mqtt');
+          } catch (error) {
+            logger.error('Failed to subscribe to user topic', { error, traceId }, 'mqtt');
+          }
 
           resolve();
         });
@@ -488,38 +481,19 @@ class MQTTServiceImpl implements MQTTService {
     });
   }
 
-  publish(topic: string, message: any): Promise<void> {
+  async publish(topic: string, message: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('MQTT client not initialized');
+    }
+
+    // Use the configured publish topic if it's a message
+    const publishTopic = topic.startsWith('messages/') ? MQTT_CONFIG.topics.publish.messages : topic;
+
     return new Promise((resolve, reject) => {
-      if (!this.client) {
-        reject(new Error('No MQTT client available'));
-        return;
-      }
-
-      const traceId = getTraceId();
-      logger.info('Publishing message', { 
-        topic, 
-        message,
-        traceId,
-        userId: this.currentUserId
-      }, 'mqtt');
-
-      this.client.publish(topic, message, (err) => {
-        if (err) {
-          logger.error('Failed to publish message', { 
-            error: err, 
-            topic, 
-            message,
-            traceId,
-            userId: this.currentUserId
-          }, 'mqtt');
-          reject(err);
+      this.client?.publish(publishTopic, message, (error) => {
+        if (error) {
+          reject(error);
         } else {
-          logger.info('Successfully published message', { 
-            topic, 
-            message,
-            traceId,
-            userId: this.currentUserId
-          }, 'mqtt');
           resolve();
         }
       });

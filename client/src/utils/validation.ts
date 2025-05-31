@@ -17,9 +17,10 @@ export const validation = {
 
   phoneNumber: (value: string) => {
     if (!value) return null;
-    const phoneRegex = /^\+?[\d\s-]{10,}$/;
+    // More lenient validation for testing
+    const phoneRegex = /^\+?[\d\s-]{5,}$/;
     if (!phoneRegex.test(value)) {
-      return 'Please enter a valid phone number';
+      return 'Please enter a valid phone number (at least 5 digits)';
     }
     return null;
   },
