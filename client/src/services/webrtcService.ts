@@ -12,6 +12,7 @@ import {
 } from '../store/slices/chatSlice';
 
 import { basicAgent } from '../config/agentConfig';
+import { MQTT_CONFIG } from '@/types/mqtt';
 
 interface WebRTCEvent {
   type: string;
@@ -299,7 +300,6 @@ export class WebRTCService {
 
         if (message.type == 'conversation.item.input_audio_transcription.completed') {
           // Add transcription as a user message
-        
           const messageId = generateMessageId();
           const user_message: Message = {
             id: messageId,
@@ -313,8 +313,21 @@ export class WebRTCService {
           };
           store.dispatch(addMessage({ roomId: this.roomId, message: user_message }));
         }
-
-
+        if (message.type == 'response.output_item.done') {
+          const messageId = generateMessageId();
+          const assistant_message: Message = {
+            id: messageId,
+            content: message.item.content[0].transcript,
+            room_id: this.roomId,
+            room_type: 'assistant',
+            sender_id: MQTT_CONFIG.ai.senderId,
+            timestamp: new Date().toISOString(),
+            status: 'sent',
+            trace_id: generateTraceId(messageId)
+          };
+          store.dispatch(addMessage({ roomId: this.roomId, message: assistant_message }));
+        }
+ 
         if (this.onMessageCallback) {
           this.onMessageCallback(message);
         }
