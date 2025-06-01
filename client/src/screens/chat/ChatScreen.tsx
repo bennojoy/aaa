@@ -22,7 +22,7 @@ import { getMessageHistory } from '../../utils/messageFormat';
 import { Message, generateMessageId, generateTraceId } from '../../types/message';
 import { MessageWithHistory } from '../../types/chat';
 import { WebRTCService } from '../../services/webrtcService';
-import { basicAgent } from '../../config/agentConfig';
+import { MessageBubble } from './MessageBubble';
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
 
@@ -122,57 +122,14 @@ export const ChatScreen = () => {
 
   useEffect(() => {
     // Initialize WebRTC service
-    webrtcService.current = new WebRTCService(audioElementRef);
+    webrtcService.current = new WebRTCService(audioElementRef, roomId, user?.id || '');
     
-    // Set up message callback
-    webrtcService.current.setMessageCallback((event) => {
-      console.log('Received event in ChatScreen:', event);
-      
-      switch (event.type) {
-        case 'conversation.item.create':
-          if (event.item?.role === 'assistant') {
-            const messageId = generateMessageId();
-            const message: Message = {
-              id: messageId,
-              content: event.item.content[0].text,
-              room_id: roomId,
-              room_type: 'assistant',
-              sender_id: 'assistant',
-              timestamp: new Date().toISOString(),
-              client_timestamp: new Date().toISOString(),
-              status: 'sent',
-              trace_id: generateTraceId(messageId),
-              assistant_name: 'Assistant'
-            };
-            dispatch(addMessage({ roomId, message }));
-          }
-          break;
-          
-        case 'transcription':
-          // Add transcription as a user message
-          const messageId = generateMessageId();
-          const message: Message = {
-            id: messageId,
-            content: event.text,
-            room_id: roomId,
-            room_type: 'user',
-            sender_id: user?.id || 'user',
-            timestamp: new Date().toISOString(),
-            client_timestamp: new Date().toISOString(),
-            status: 'sent',
-            trace_id: generateTraceId(messageId)
-          };
-          dispatch(addMessage({ roomId, message }));
-          break;
-      }
-    });
-
     return () => {
       if (isCallActive) {
         webrtcService.current?.endCall();
       }
     };
-  }, [dispatch, roomId, user?.id]);
+  }, [roomId, user?.id]);
 
   const handleCallToggle = async () => {
     if (isCallActive) {
@@ -182,7 +139,8 @@ export const ChatScreen = () => {
     } else {
       try {
         // Start call using token from Redux store
-        await webrtcService.current?.startCall(basicAgent.instructions);
+        console.log('Starting call for roomId:', roomId);
+        await webrtcService.current?.startCall(roomId);
         setIsCallActive(true);
       } catch (error) {
         console.error('Failed to start call:', error);
@@ -240,18 +198,6 @@ export const ChatScreen = () => {
     setNewMessage('');
   };
 
-  const renderMessage = ({ item }: { item: Message }) => (
-    <View style={[
-      styles.messageContainer,
-      item.sender_id === user?.id ? styles.userMessage : styles.aiMessage
-    ]}>
-      <Text style={styles.messageText}>{item.content}</Text>
-      <Text style={styles.timestamp}>
-        {new Date(item.timestamp).toLocaleTimeString()}
-      </Text>
-    </View>
-  );
-
   return (
     <KeyboardAvoidingView 
       style={styles.container}
@@ -260,7 +206,7 @@ export const ChatScreen = () => {
     >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Icon name="arrow-back" size={24} color="#007AFF" />
+          <Icon name="arrow-back" size={24} color="#0ABAB5" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{roomName}</Text>
       </View>
@@ -268,7 +214,7 @@ export const ChatScreen = () => {
       <FlatList
         ref={flatListRef}
         data={messages}
-        renderItem={renderMessage}
+        renderItem={({ item }) => <MessageBubble message={item} />}
         keyExtractor={item => item.id}
         contentContainerStyle={styles.messageList}
         onScroll={handleScroll}
@@ -291,32 +237,31 @@ export const ChatScreen = () => {
       )}
 
       <View style={styles.inputContainer}>
-        <TouchableOpacity 
+        <TextInput
+          style={styles.input}
+          value={newMessage}
+          onChangeText={setNewMessage}
+          placeholder="Type a message..."
+          placeholderTextColor="#999"
+          multiline
+          maxLength={1000}
+        />
+        <TouchableOpacity
+          style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+          onPress={handleSend}
+          disabled={!newMessage.trim()}
+        >
+          <Icon name="send" size={24} color={newMessage.trim() ? "#0ABAB5" : "#999"} />
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.callButton, isCallActive && styles.callButtonActive]}
           onPress={handleCallToggle}
         >
           <Icon 
             name={isCallActive ? "call-end" : "call"} 
             size={24} 
-            color={isCallActive ? "#fff" : "#30D5C8"} 
+            color={isCallActive ? "#FF3B30" : "#0ABAB5"} 
           />
-        </TouchableOpacity>
-
-        <TextInput
-          style={styles.input}
-          value={newMessage}
-          onChangeText={setNewMessage}
-          placeholder="Type a message..."
-          placeholderTextColor="#86939e"
-          multiline
-        />
-
-        <TouchableOpacity 
-          style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-          onPress={handleSend}
-          disabled={!newMessage.trim()}
-        >
-          <Icon name="send" size={24} color={newMessage.trim() ? "#30D5C8" : "#86939e"} />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -335,6 +280,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
   backButton: {
     marginRight: 16,
@@ -347,45 +300,30 @@ const styles = StyleSheet.create({
   messageList: {
     padding: 16,
   },
-  messageContainer: {
-    maxWidth: '80%',
-    padding: 12,
-    borderRadius: 16,
-    marginBottom: 8,
-  },
-  userMessage: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#0ABAB5',
-    opacity: 0.8,
-  },
-  aiMessage: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#0ABAB5',
-  },
-  messageText: {
-    fontSize: 16,
-    color: '#fff',
-  },
-  timestamp: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginTop: 4,
-  },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 8,
+    padding: 12,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: -2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
   input: {
     flex: 1,
     backgroundColor: '#f5f5f5',
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginHorizontal: 8,
+    paddingVertical: 10,
+    marginRight: 8,
+    fontSize: 16,
     maxHeight: 100,
     color: '#000',
   },
@@ -397,11 +335,11 @@ const styles = StyleSheet.create({
   },
   callButton: {
     padding: 8,
-    borderRadius: 20,
-    backgroundColor: '#f5f5f5',
+    marginLeft: 10,
   },
   callButtonActive: {
-    backgroundColor: '#ff3b30',
+    backgroundColor: '#FFE5E5',
+    borderRadius: 20,
   },
   scrollToBottomButton: {
     position: 'absolute',
@@ -410,7 +348,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#0ABAB5',
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',

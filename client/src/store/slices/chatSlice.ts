@@ -21,6 +21,14 @@ const chatSlice = createSlice({
     addMessage: (state, action: PayloadAction<{ roomId: string; message: Message }>) => {
       const { roomId, message } = action.payload;
       
+      logger.info('addMessage reducer called', {
+        roomId,
+        messageId: message.id,
+        content: message.content,
+        status: message.status,
+        currentState: state.messages[roomId]?.items[message.id]
+      });
+      
       if (!state.messages[roomId]) {
         state.messages[roomId] = {
           items: {},
@@ -46,7 +54,6 @@ const chatSlice = createSlice({
         state.messages[roomId].unread += 1;
       }
 
-      // Debug log for message persistence
       logger.info('Message added/updated in store', {
         roomId,
         messageId: message.id,
@@ -55,30 +62,97 @@ const chatSlice = createSlice({
         isNewMessage,
         statusChanged,
         totalMessages: state.messages[roomId].total,
-        currentState: state.messages[roomId]
+        currentState: state.messages[roomId].items[message.id]
+      });
+    },
+
+    updateMessage: (state, action: PayloadAction<{ roomId: string; messageId: string; updates: Partial<Message> }>) => {
+      const { roomId, messageId, updates } = action.payload;
+      
+      logger.info('updateMessage reducer called', {
+        roomId,
+        messageId,
+        updates,
+        currentState: state.messages[roomId]?.items[messageId]
       }, 'chat');
+
+      if (state.messages[roomId]?.items[messageId]) {
+        state.messages[roomId].items[messageId] = {
+          ...state.messages[roomId].items[messageId],
+          ...updates
+        };
+
+        logger.info('Message updated in store', {
+          roomId,
+          messageId,
+          updates,
+          currentState: state.messages[roomId].items[messageId]
+        }, 'chat');
+      } else {
+        logger.warn('Message not found for update', {
+          roomId,
+          messageId,
+          updates,
+          rooms: Object.keys(state.messages)
+        }, 'chat');
+      }
     },
 
     updateMessageStatus: (state, action: PayloadAction<{ messageId: string; status: MessageStatus }>) => {
       const { messageId, status } = action.payload;
       
+      logger.info('updateMessageStatus reducer called', {
+        messageId,
+        newStatus: status,
+        currentState: state.sendingStatus[messageId],
+        allRooms: Object.keys(state.messages),
+        allMessages: Object.entries(state.messages).map(([roomId, room]) => ({
+          roomId,
+          messageCount: Object.keys(room.items).length,
+          messages: Object.entries(room.items).map(([msgId, msg]) => ({
+            id: msgId,
+            status: msg.status
+          }))
+        }))
+      }, 'chat');
+      
       // Find the message in any room and update its status
-      Object.values(state.messages).forEach(roomMessages => {
+      let found = false;
+      Object.entries(state.messages).forEach(([roomId, roomMessages]) => {
         if (roomMessages.items[messageId]) {
           const oldStatus = roomMessages.items[messageId].status;
           roomMessages.items[messageId].status = status;
+          found = true;
           
-          // Debug log for status update
-          logger.info('Message status updated', {
+          logger.info('Message status updated in room', {
+            roomId,
             messageId,
             oldStatus,
             newStatus: status,
-            roomId: Object.keys(state.messages).find(roomId => 
-              state.messages[roomId].items[messageId]
-            )
+            currentState: roomMessages.items[messageId],
+            allMessagesInRoom: Object.entries(roomMessages.items).map(([msgId, msg]) => ({
+              id: msgId,
+              status: msg.status
+            }))
           }, 'chat');
         }
       });
+
+      if (!found) {
+        logger.warn('Message not found for status update', {
+          messageId,
+          status,
+          rooms: Object.keys(state.messages),
+          allMessages: Object.entries(state.messages).map(([roomId, room]) => ({
+            roomId,
+            messageCount: Object.keys(room.items).length,
+            messages: Object.entries(room.items).map(([msgId, msg]) => ({
+              id: msgId,
+              status: msg.status
+            }))
+          }))
+        }, 'chat');
+      }
 
       state.sendingStatus[messageId] = status;
     },
@@ -136,6 +210,7 @@ const chatSlice = createSlice({
 export const {
   setConnectionStatus,
   addMessage,
+  updateMessage,
   updateMessageStatus,
   markRoomAsRead,
   clearRoomMessages

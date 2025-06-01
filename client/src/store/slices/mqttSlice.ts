@@ -67,6 +67,12 @@ const mqttSlice = createSlice({
     messageReceived: (state, action: PayloadAction<{ roomId: string; message: any }>) => {
       // No state changes needed for message received
     },
+    messageSent: (state, action: PayloadAction<{ roomId: string; messageId: string }>) => {
+      // No state changes needed for message sent
+    },
+    messageFailed: (state, action: PayloadAction<{ roomId: string; messageId: string }>) => {
+      // No state changes needed for message failed
+    },
     setUserId: (state, action: PayloadAction<string>) => {
       state.currentUserId = action.payload;
     },
@@ -82,6 +88,8 @@ export const {
   disconnected, 
   error, 
   messageReceived,
+  messageSent,
+  messageFailed,
   setUserId,
   setRetryCount
 } = mqttSlice.actions;

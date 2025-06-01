@@ -12,7 +12,7 @@ import {
   disconnected as mqttDisconnected,
   error as mqttError
 } from '../slices/mqttSlice';
-import { RootState } from '../index';
+import { RootState } from '../store';
 import { Message, MessageStatus, RoomType } from '../../types/message';
 import { generateMessageId, generateTraceId } from '../../types/message';
 import { createAction } from '@reduxjs/toolkit';

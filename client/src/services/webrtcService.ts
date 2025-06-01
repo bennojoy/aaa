@@ -3,6 +3,15 @@ import { store } from '../store/store';
 import { getAuthToken } from '../store/selectors/authSelectors';
 import { logger } from '../utils/logger';
 import { apiClient } from '../api/client';
+import { Message, generateMessageId, generateTraceId } from '@/types/message';
+import { 
+  addMessage, 
+  updateMessageStatus, 
+  markRoomAsRead,
+  setConnectionStatus
+} from '../store/slices/chatSlice';
+
+import { basicAgent } from '../config/agentConfig';
 
 interface WebRTCEvent {
   type: string;
@@ -34,11 +43,15 @@ export class WebRTCService {
   private traceId: string = '';
   private audioElement: RefObject<HTMLAudioElement | null>;
   private onMessageCallback: ((event: any) => void) | null = null;
+  private instructions: string = '';
+  private roomId: string;
+  private userId: string;
 
-  constructor(audioElement: RefObject<HTMLAudioElement | null>) {
+  constructor(audioElement: RefObject<HTMLAudioElement | null>, roomId: string, userId: string) {
     this.audioElement = audioElement;
     this.traceId = crypto.randomUUID();
-    
+    this.roomId = roomId;
+    this.userId = userId;
     // Create and attach audio element if it doesn't exist
     if (!this.audioElement.current) {
       const audio = document.createElement('audio');
@@ -53,12 +66,15 @@ export class WebRTCService {
     this.onMessageCallback = callback;
   }
 
-  async startCall(): Promise<void> {
+  async startCall(roomId: string): Promise<void> {
     try {
       if (this.isCallActive) {
         logger.warn('Call already active', { traceId: this.traceId });
         return;
       }
+      
+      this.instructions = basicAgent.instructions;
+      this.roomId = roomId;
 
       // Get auth token from Redux store
       const state = store.getState();
@@ -195,6 +211,18 @@ export class WebRTCService {
       await this.peerConnection.setRemoteDescription(answer);
       logger.info('Remote description set successfully', { traceId: this.traceId });
 
+      // Wait for data channel to be open
+      if (this.dataChannel?.readyState !== 'open') {
+        await new Promise<void>((resolve) => {
+          if (!this.dataChannel) return;
+          const onOpen = () => {
+            this.dataChannel?.removeEventListener('open', onOpen);
+            resolve();
+          };
+          this.dataChannel.addEventListener('open', onOpen);
+        });
+      }
+
       this.isCallActive = true;
       logger.info('WebRTC call started successfully', { 
         connectionState: this.peerConnection.connectionState,
@@ -236,7 +264,8 @@ export class WebRTCService {
       try {
         const message = JSON.parse(event.data);
         logger.info('Received message', { 
-          message, 
+          type: message.type,
+          message: message,
           traceId: this.traceId 
         });
 
@@ -247,7 +276,7 @@ export class WebRTCService {
             type: 'session.update',
             session: {
               modalities: ['text', 'audio'],
-              instructions: 'You are a helpful AI assistant.',
+              instructions: this.instructions,
               voice: 'sage',
               input_audio_transcription: { model: 'whisper-1' },
               turn_detection: {
@@ -267,6 +296,24 @@ export class WebRTCService {
             traceId: this.traceId 
           });
         }
+
+        if (message.type == 'conversation.item.input_audio_transcription.completed') {
+          // Add transcription as a user message
+        
+          const messageId = generateMessageId();
+          const user_message: Message = {
+            id: messageId,
+            content: message.transcript,
+            room_id: this.roomId,
+            room_type: 'assistant',
+            sender_id: this.userId || 'user',
+            timestamp: new Date().toISOString(),
+            status: 'sent',
+            trace_id: generateTraceId(messageId)
+          };
+          store.dispatch(addMessage({ roomId: this.roomId, message: user_message }));
+        }
+
 
         if (this.onMessageCallback) {
           this.onMessageCallback(message);
@@ -323,5 +370,27 @@ export class WebRTCService {
 
     this.isCallActive = false;
     logger.info('Call cleaned up', { traceId: this.traceId });
+  }
+
+  sendEvent(event: WebRTCEvent): void {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      logger.warn('Cannot send event - data channel not open', { 
+        traceId: this.traceId 
+      });
+      return;
+    }
+
+    try {
+      this.dataChannel.send(JSON.stringify(event));
+      logger.info('Event sent', { 
+        event, 
+        traceId: this.traceId 
+      });
+    } catch (error) {
+      logger.error('Failed to send event', { 
+        error, 
+        traceId: this.traceId 
+      });
+    }
   }
 }

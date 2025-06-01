@@ -10,7 +10,7 @@ export interface BaseMessage {
   content: string;
   sender_id: string;
   timestamp: string;
-  client_timestamp: string;
+  client_timestamp?: string;
   status: MessageStatus;
   trace_id: string;
 }

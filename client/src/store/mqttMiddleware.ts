@@ -1,11 +1,11 @@
 import { Middleware, AnyAction } from 'redux';
-import { connect, connected, disconnected, error, messageReceived, messageSent, messageFailed } from '../mqttSlice';
-import { setConnectionStatus, addMessage } from '../chatSlice';
+import { connect, connected, disconnected, error, messageReceived, messageSent, messageFailed } from './slices/mqttSlice';
+import { setConnectionStatus, addMessage, updateMessageStatus } from './slices/chatSlice';
 import { mqttService } from '../services/mqtt';
 import { logger } from '../utils/logger';
 import { getTraceId } from '../utils/trace';
 import { MQTT_CONFIG } from '../types/mqtt';
-import { MessageStatus } from '../../types/message';
+import { Message, MessageStatus } from '../types/message';
 
 // Immediate logging
 console.log('MQTT middleware module loaded');
@@ -82,6 +82,7 @@ export const mqttMiddleware: Middleware = store => {
           const roomId = parsedMessage.room_id;
           const roomType = parsedMessage.room_type;
           const messageTraceId = getTraceId();
+          const state = store.getState();
           
           console.log('Message details:', {
             messageId,
@@ -100,7 +101,7 @@ export const mqttMiddleware: Middleware = store => {
             senderId: parsedMessage.sender_id,
             timestamp: parsedMessage.client_timestamp,
             traceId: messageTraceId,
-            currentState: store.getState().mqtt
+            currentState: state.mqtt
           }, 'mqtt');
 
           // Skip if no room_id in message
@@ -113,14 +114,35 @@ export const mqttMiddleware: Middleware = store => {
             return;
           }
 
-          const isOwnMessage = parsedMessage.sender_id === userId;
+          // Check if this is a response to our own message
+          const existingMessage = state.chat.messages[roomId]?.items[messageId];
+          const isResponseToOwnMessage = existingMessage?.status === 'sending';
+          console.log('Checking for existing message:', {
+            roomId,
+            messageId,
+            existingMessage,
+            allMessages: state.chat.messages[roomId]?.items,
+            isResponseToOwnMessage
+          });
           
-          // Add message to store with appropriate status
+          if (isResponseToOwnMessage) {
+            // Update the status of our sent message
+            logger.info('Updating status of sent message', {
+              messageId,
+              roomId,
+              traceId: messageTraceId
+            }, 'mqtt');
+            store.dispatch(updateMessageStatus({ messageId, status: 'sent' }));
+            return;
+          }
+          
+          // For new messages, add them to the store with 'delivered' status
           const messageToAdd = {
             ...parsedMessage,
-            status: isOwnMessage ? 'sent' : 'delivered',
+            status: 'delivered' as MessageStatus,  // All received messages start as 'delivered'
             room_type: roomType === 'assistant' ? 'assistant' as const : 'user' as const,
-            assistant_name: roomType === 'assistant' ? 'Assistant' : undefined
+            assistant_name: roomType === 'assistant' ? 'Assistant' : undefined,
+            timestamp: new Date().toISOString()
           };
           
           console.log('Prepared message for store:', messageToAdd);
@@ -131,18 +153,11 @@ export const mqttMiddleware: Middleware = store => {
             status: messageToAdd.status,
             roomType: messageToAdd.room_type,
             traceId: messageTraceId,
-            currentState: store.getState().mqtt
+            currentState: state.mqtt
           }, 'mqtt');
 
           // For received messages, dispatch messageReceived
-          if (!isOwnMessage) {
-            console.log('Dispatching messageReceived action for received message');
-            store.dispatch(messageReceived({ roomId, message: messageToAdd }));
-          } else {
-            // For own messages, update status to 'sent'
-            console.log('Updating own message status to sent');
-            store.dispatch(messageSent({ roomId, messageId }));
-          }
+          store.dispatch(messageReceived({ roomId, message: messageToAdd }));
           
           // Always dispatch addMessage to ensure message is in the store
           console.log('Dispatching addMessage action');
@@ -154,7 +169,7 @@ export const mqttMiddleware: Middleware = store => {
             status: messageToAdd.status,
             roomType: messageToAdd.room_type,
             traceId: messageTraceId,
-            currentState: store.getState().mqtt
+            currentState: state.mqtt
           }, 'mqtt');
         } catch (error) {
           console.error('Error processing MQTT message:', error);
@@ -181,7 +196,7 @@ export const mqttMiddleware: Middleware = store => {
         config: MQTT_CONFIG
       });
 
-      mqttService.connect(token, userId)
+      mqttService.connect({ token, userId })
         .then(() => {
           console.log('MQTT connect promise resolved');
           logger.info('MQTT connection successful, dispatching connected action', { 
@@ -216,7 +231,7 @@ export const mqttMiddleware: Middleware = store => {
             currentState: store.getState().mqtt,
             config: MQTT_CONFIG
           }, 'mqtt');
-          store.dispatch(error(err.message));
+          store.dispatch(error(err));
           store.dispatch(disconnected());
           store.dispatch(setConnectionStatus('disconnected'));
           
@@ -283,11 +298,10 @@ export const mqttMiddleware: Middleware = store => {
         client_timestamp: new Date().toISOString()
       };
 
-      logger.info('Publishing message to MQTT', { 
+      logger.info('Creating message with sending status', { 
         messageId, 
         traceId,
-        payload: messagePayload,
-        currentState: state.mqtt
+        payload: messagePayload
       }, 'mqtt');
 
       // Create message with 'sending' status
@@ -296,35 +310,93 @@ export const mqttMiddleware: Middleware = store => {
             ...messagePayload,
             room_type: 'assistant' as const,
             status: 'sending' as MessageStatus,
-            assistant_name: 'Assistant'
+            assistant_name: 'Assistant',
+            timestamp: new Date().toISOString()
           }
         : {
             ...messagePayload,
             room_type: 'user' as const,
-            status: 'sending' as MessageStatus
+            status: 'sending' as MessageStatus,
+            timestamp: new Date().toISOString()
           };
       
       // Add message to store with 'sending' status
+      logger.info('Dispatching addMessage with sending status', {
+        messageId,
+        status: message.status,
+        traceId
+      }, 'mqtt');
       store.dispatch(addMessage({ roomId, message }));
 
       // Publish to the correct topic
-      mqttService.publish(`messages/to_room`, JSON.stringify(messagePayload))
-        .then(() => {
-          logger.info('Message published successfully', { 
+      logger.info('Publishing message to MQTT', {
+        messageId,
+        traceId,
+        topic: 'messages/to_room'
+      }, 'mqtt');
+
+      (async () => {
+        try {
+          await mqttService.publish(`messages/to_room`, JSON.stringify(messagePayload));
+          
+          logger.info('Message published successfully, updating status to sent', { 
             messageId, 
             traceId,
             currentState: state.mqtt
           }, 'mqtt');
-        })
-        .catch((err: Error) => {
-          logger.error('Failed to publish message', { 
+          
+          // First update the message in the store to ensure consistency
+          const updatedMessage = {
+            ...message,
+            status: 'sent' as MessageStatus,
+            timestamp: new Date().toISOString()
+          };
+          
+          logger.info('Dispatching addMessage with sent status', {
+            messageId,
+            status: updatedMessage.status,
+            traceId
+          }, 'mqtt');
+          store.dispatch(addMessage({ roomId, message: updatedMessage }));
+          
+          // Then update the message status
+          logger.info('Dispatching updateMessageStatus', {
+            messageId,
+            status: 'sent',
+            traceId
+          }, 'mqtt');
+          store.dispatch(updateMessageStatus({ messageId, status: 'sent' }));
+          
+          // Finally dispatch messageSent action
+          logger.info('Dispatching messageSent action', {
+            messageId,
+            roomId,
+            traceId
+          }, 'mqtt');
+          store.dispatch(messageSent({ roomId, messageId }));
+        } catch (err) {
+          logger.error('Failed to publish message, updating status to failed', { 
             error: err, 
             messageId, 
             traceId,
             currentState: state.mqtt
           }, 'mqtt');
+          
+          // Update message status to 'failed'
+          store.dispatch(updateMessageStatus({ messageId, status: 'failed' }));
+          
+          // Also update the message in the store to ensure consistency
+          const updatedMessage = {
+            ...message,
+            status: 'failed' as MessageStatus,
+            timestamp: new Date().toISOString()
+          };
+          store.dispatch(addMessage({ roomId, message: updatedMessage }));
+          
+          // Dispatch messageFailed action
           store.dispatch(messageFailed({ roomId, messageId }));
-        });
+        }
+      })();
     }
 
     return result;

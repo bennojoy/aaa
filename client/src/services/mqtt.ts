@@ -486,14 +486,42 @@ class MQTTServiceImpl implements MQTTService {
       throw new Error('MQTT client not initialized');
     }
 
+    const traceId = getTraceId();
+    logger.info('Publishing MQTT message', {
+      topic,
+      message: typeof message === 'string' ? JSON.parse(message) : message,
+      traceId,
+      currentState: {
+        isConnected: this.client.connected,
+        currentUserId: this.currentUserId
+      }
+    }, 'mqtt');
+
     // Use the configured publish topic if it's a message
     const publishTopic = topic.startsWith('messages/') ? MQTT_CONFIG.topics.publish.messages : topic;
 
     return new Promise((resolve, reject) => {
-      this.client?.publish(publishTopic, message, (error) => {
+      this.client?.publish(publishTopic, message, { qos: 1 }, (error) => {
         if (error) {
+          logger.error('MQTT publish failed', {
+            error,
+            topic: publishTopic,
+            traceId,
+            currentState: {
+              isConnected: this.client?.connected,
+              currentUserId: this.currentUserId
+            }
+          }, 'mqtt');
           reject(error);
         } else {
+          logger.info('MQTT message published successfully', {
+            topic: publishTopic,
+            traceId,
+            currentState: {
+              isConnected: this.client?.connected,
+              currentUserId: this.currentUserId
+            }
+          }, 'mqtt');
           resolve();
         }
       });

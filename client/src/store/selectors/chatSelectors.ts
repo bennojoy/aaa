@@ -32,7 +32,14 @@ export const getLastUnreadMessage = (roomId: string) => (state: RootState) => {
 };
 
 export const getMessageStatus = (messageId: string) => (state: RootState) => {
-  return state.chat.sendingStatus[messageId] || 'sending';
+  // Find the message in any room
+  for (const roomMessages of Object.values(state.chat.messages)) {
+    const message = roomMessages.items[messageId];
+    if (message) {
+      return message.status;
+    }
+  }
+  return 'sent'; // Default to 'sent' if message not found
 };
 
 export const getConnectionStatus = (state: RootState) => {

@@ -3,8 +3,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import { useSelector } from 'react-redux';
 import { Message } from '../../types/message';
 import { getCurrentUserId } from '../../store/selectors/authSelectors';
-import { getMessageStatus } from '../../store/selectors/chatSelectors';
 import { RootState } from '../../store/store';
+import { logger } from '../../utils/logger';
 
 interface MessageBubbleProps {
   message: Message;
@@ -12,10 +12,16 @@ interface MessageBubbleProps {
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const currentUserId = useSelector(getCurrentUserId);
-  const messageStatus = useSelector((state: RootState) => getMessageStatus(message.id)(state));
+  
+  logger.info('Rendering MessageBubble', {
+    messageId: message.id,
+    content: message.content,
+    sender: message.sender_id,
+    status: message.status
+  });
   
   const isOwnMessage = message.sender_id === currentUserId;
-  const timestamp = new Date(message.client_timestamp).toLocaleTimeString();
+  const timestamp = new Date(message.timestamp).toLocaleTimeString();
 
   return (
     <View style={[
@@ -30,13 +36,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
         styles.bubble,
         isOwnMessage ? styles.ownBubble : styles.otherBubble
       ]}>
-        <Text style={styles.messageText}>{message.content}</Text>
+        <Text style={[
+          styles.messageText,
+          isOwnMessage ? styles.ownMessageText : styles.otherMessageText
+        ]}>
+          {message.content}
+        </Text>
       </View>
 
       <View style={styles.footer}>
         <Text style={styles.timestamp}>{timestamp}</Text>
-        {isOwnMessage && (
-          <Text style={styles.status}>{messageStatus}</Text>
+        {isOwnMessage && message.status !== 'sending' && (
+          <Text style={styles.status}>{message.status}</Text>
         )}
       </View>
     </View>
@@ -58,19 +69,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginBottom: 2,
+    marginLeft: 4,
   },
   bubble: {
     padding: 12,
     borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+    elevation: 2,
   },
   ownBubble: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#0ABAB5',
+    borderBottomRightRadius: 4,
   },
   otherBubble: {
     backgroundColor: '#E5E5EA',
+    borderBottomLeftRadius: 4,
   },
   messageText: {
     fontSize: 16,
+    lineHeight: 20,
+  },
+  ownMessageText: {
+    color: '#fff',
+  },
+  otherMessageText: {
     color: '#000',
   },
   footer: {
@@ -78,6 +106,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     alignItems: 'center',
     marginTop: 2,
+    paddingHorizontal: 4,
   },
   timestamp: {
     fontSize: 10,
@@ -87,5 +116,5 @@ const styles = StyleSheet.create({
   status: {
     fontSize: 10,
     color: '#666',
-  },
+  }
 }); 
