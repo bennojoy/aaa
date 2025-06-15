@@ -37,7 +37,7 @@ function* handleSearchRooms(action: ReturnType<typeof searchRoomsRequest>): Gene
 
   try {
     logger.info('Searching rooms', { query, traceId }, 'room');
-    const response = yield call(apiClient.get, '/api/v1/rooms', {
+    const response = yield call(apiClient.get, '/api/v1/rooms/search', {
       params: { query }
     });
 
@@ -130,7 +130,9 @@ function* handleAddParticipant(action: ReturnType<typeof addParticipantRequest>)
   try {
     logger.info('Adding participant to room', { roomId, userId, traceId }, 'room');
     const response = yield call(apiClient.post, `/api/v1/rooms/${roomId}/participants`, {
-      user_id: userId
+      user_id: userId.replace(/-/g, ''),
+      role: 'member',
+      status: 'ACTIVE'
     });
 
     logger.info('Participant added successfully', { 

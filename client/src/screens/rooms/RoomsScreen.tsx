@@ -125,11 +125,27 @@ export const RoomsScreen = () => {
     const traceId = getTraceId();
     logger.info('Rooms screen mounted', { traceId }, 'room');
     validateTokenAndLoadRooms();
-    return () => {
-      logger.info('Rooms screen unmounted', null, 'room');
-      dispatch(clearRoomError());
+
+    const setup = async () => {
+      try {
+        // Remove the WebSocket connection
+        // await ionWebSocketService.connect();
+        
+        // ... rest of setup code ...
+      } catch (error) {
+        console.error('Failed to setup:', error);
+      }
     };
-  }, [dispatch]);
+
+    setup();
+
+    return () => {
+      // Remove the WebSocket disconnection
+      // ionWebSocketService.disconnect();
+      
+      // ... rest of cleanup code ...
+    };
+  }, []);
 
   // Handle MQTT reconnection when screen comes into focus
   useFocusEffect(
@@ -237,9 +253,10 @@ export const RoomsScreen = () => {
         const response = await apiClient.get('/api/v1/rooms/users/search', {
           params: { 
             query: participantSearchQuery.trim(),
-            exclude_room_id: selectedRoom.id // Exclude users already in the room
+            exclude_room_id: selectedRoom.id
           }
         });
+        console.log('Search results:', response.data.users);
         setSearchResults(response.data.users || []);
       } catch (error: any) {
         logger.error('Failed to search users', { error: error.message }, 'room');
@@ -290,8 +307,8 @@ export const RoomsScreen = () => {
     const lastUnread = lastUnreadMessages[room.id];
 
     return (
-      <TouchableOpacity onPress={() => handleRoomSelect(room)}>
-        <View className="bg-white p-4 mb-2 rounded-lg shadow-sm">
+      <View className="bg-white p-4 mb-2 rounded-lg shadow-sm">
+        <TouchableOpacity onPress={() => handleRoomSelect(room)}>
           <View className="flex-row justify-between items-center">
             <Text className="text-lg font-semibold text-foreground">{room.name}</Text>
             {unreadCount > 0 && (
@@ -305,8 +322,18 @@ export const RoomsScreen = () => {
               {lastUnread.content}
             </Text>
           )}
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          className="mt-2 bg-grey-5 px-4 py-2 rounded-lg self-end"
+          onPress={() => {
+            setSelectedRoom(room);
+            setShowAddParticipant(true);
+          }}
+        >
+          <Text className="text-foreground">Add Participant</Text>
+        </TouchableOpacity>
+      </View>
     );
   };
 
@@ -443,19 +470,24 @@ export const RoomsScreen = () => {
             {isSearching ? (
               <ActivityIndicator color="#007AFF" />
             ) : (
-              <FlatList
-                data={searchResults}
-                keyExtractor={item => item.id}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    className="py-3 border-b border-grey-5"
-                    onPress={() => handleParticipantSelect(item.id)}
-                  >
-                    <Text className="text-foreground">{item.name}</Text>
-                  </TouchableOpacity>
-                )}
-                ListEmptyComponent={renderSearchEmptyList}
-              />
+              <View style={{ height: 300 }}>
+                <FlatList
+                  data={searchResults}
+                  keyExtractor={item => item.id}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      className="py-3 border-b border-grey-5"
+                      onPress={() => handleParticipantSelect(item.id)}
+                    >
+                      <View className="flex-row justify-between items-center">
+                        <Text className="text-foreground">{item.alias}</Text>
+                        <Text className="text-grey-2 text-sm">{item.phone_number}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  ListEmptyComponent={renderSearchEmptyList}
+                />
+              </View>
             )}
 
             <TouchableOpacity

@@ -17,6 +17,7 @@ from app.middlewares.trace_id import get_trace_id
 import uuid
 from app.repositories.participant import add_participant
 from app.schemas.participant import ParticipantCreate
+from app.models.participant import ParticipantStatus
 
 class RoomServiceError(Exception):
     """Base exception for room service errors"""
@@ -54,7 +55,7 @@ async def create_room_service(db: AsyncSession, room_in: RoomCreate, user_id: uu
         participant_data = ParticipantCreate(
             user_id=user_id,
             role="owner",
-            status="active"
+            status=ParticipantStatus.ACTIVE
         )
         await add_participant(db, room.id, participant_data)
         

@@ -27,7 +27,7 @@ from app.schemas.participant import (
 from app.core.logging import logger
 from app.middlewares.trace_id import get_trace_id
 from app.core.config import settings
-from app.models.participant import Participant
+from app.models.participant import Participant, ParticipantStatus
 from app.models.room import Room, RoomType
 from app.models.user import User, UserType
 import uuid
@@ -458,7 +458,7 @@ async def check_message_permission_service(
             and_(
                 Participant.user_id == user_id,
                 Participant.room_id == room_id,
-                Participant.status == "active"
+                Participant.status == ParticipantStatus.ACTIVE
             )
         )
         result = await db.execute(participant_query)
@@ -470,7 +470,7 @@ async def check_message_permission_service(
         participants_query = select(Participant).join(User).where(
             and_(
                 Participant.room_id == room_id,
-                Participant.status == "active",
+                Participant.status == ParticipantStatus.ACTIVE,
                 User.user_type != UserType.BOT
             )
         ).distinct()

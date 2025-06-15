@@ -12,9 +12,9 @@ class ParticipantRole(str, enum.Enum):
     MEMBER = "member"
 
 class ParticipantStatus(str, enum.Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    BANNED = "banned"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    BANNED = "BANNED"
 
 class Participant(Base):
     __tablename__ = "participants"

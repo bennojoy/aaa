@@ -29,7 +29,7 @@ export interface Room {
     /** User's role in the room */
     role: 'member' | 'admin';
     /** User's status in the room */
-    status: 'active' | 'inactive';
+    status: 'ACTIVE' | 'INACTIVE' | 'BANNED';
   }>;
 }
 
@@ -105,5 +105,5 @@ export interface AddParticipantParams {
   /** Role of the participant (optional) */
   role?: 'member' | 'admin';
   /** Status of the participant (optional) */
-  status?: 'active';
+  status?: 'ACTIVE';
 } 

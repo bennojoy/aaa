@@ -17,8 +17,11 @@ class RoomUpdate(RoomBase):
     assistant_name: Optional[str] = Field(None, min_length=1, max_length=100)
     type: Optional[RoomType] = None
 
-class RoomResponse(RoomBase):
+class RoomResponse(BaseModel):
     id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    type: RoomType
     created_by: uuid.UUID
     is_default: bool
     assistant_name: str

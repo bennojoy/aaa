@@ -20,6 +20,7 @@ from app.middlewares.trace_id import get_trace_id
 from app.core.security import hash_password, verify_password
 from app.core.logging import logger
 from app.models.room import RoomType
+from app.models.participant import ParticipantStatus
 import uuid
 
 class UserServiceError(Exception):
@@ -64,7 +65,7 @@ async def create_assistant_and_default_room(db: AsyncSession, user_id: uuid.UUID
         user_participant_data = ParticipantCreate(
             user_id=user_id,
             role="owner",
-            status="active"
+            status=ParticipantStatus.ACTIVE
         )
         await add_participant(db, room.id, user_participant_data)
         

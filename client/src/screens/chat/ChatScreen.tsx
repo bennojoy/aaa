@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { View, StyleSheet, FlatList, KeyboardAvoidingView, Platform, Text, TouchableOpacity, TextInput, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, StyleSheet, FlatList, KeyboardAvoidingView, Platform, Text, TouchableOpacity, TextInput, NativeSyntheticEvent, NativeScrollEvent, Alert } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { RouteProp, useRoute, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { RootState } from '../../store/store';
@@ -23,6 +23,7 @@ import { Message, generateMessageId, generateTraceId } from '../../types/message
 import { MessageWithHistory } from '../../types/chat';
 import { WebRTCService } from '../../services/webrtcService';
 import { MessageBubble } from './MessageBubble';
+import { IonSDKService } from '../../services/IonSDKService';
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
 
@@ -60,7 +61,8 @@ export const ChatScreen = () => {
   const [isCallActive, setIsCallActive] = useState(false);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const webrtcService = useRef<WebRTCService | null>(null);
-
+  const ionService = useRef<IonSDKService | null>(null);
+  
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (isScrolledToBottom) {
@@ -121,29 +123,55 @@ export const ChatScreen = () => {
   }, [dispatch, roomId, currentUserId]);
 
   useEffect(() => {
-    // Initialize WebRTC service
+    // Initialize WebRTC service for assistant rooms
     webrtcService.current = new WebRTCService(audioElementRef, roomId, user?.id || '');
     
     return () => {
       if (isCallActive) {
-        webrtcService.current?.endCall();
+        if (roomType === 'assistant') {
+          webrtcService.current?.endCall();
+        } else if (roomType === 'user') {
+          ionService.current?.leaveRoom();
+          ionService.current?.close();
+        }
       }
     };
-  }, [roomId, user?.id]);
+  }, [roomId, user?.id, roomType]);
 
-  const handleCallToggle = async () => {
-    if (isCallActive) {
-      // End call
-      await webrtcService.current?.endCall();
-      setIsCallActive(false);
-    } else {
+  const handleToggleCall = async () => {
+    if (!isCallActive) {
       try {
-        // Start call using token from Redux store
-        console.log('Starting call for roomId:', roomId);
-        await webrtcService.current?.startCall(roomId);
+        if (roomType === 'assistant') {
+          await webrtcService.current?.startCall(roomId);
+        } else if (roomType === 'user') {
+          // Get or create Ion SDK service instance
+          const wsUrl = Platform.select({
+            web: 'ws://localhost:9000/ws',
+            default: 'ws://10.0.2.2:9000/ws' // For Android emulator
+          }) || 'ws://localhost:9000/ws';
+          
+          ionService.current = new IonSDKService(wsUrl);
+          await ionService.current.setupMediaStream({ audio: true, video: false });
+          await ionService.current.joinRoom(roomId, user?.id || '');
+        }
         setIsCallActive(true);
       } catch (error) {
         console.error('Failed to start call:', error);
+        Alert.alert('Error', 'Failed to start call');
+      }
+    } else {
+      try {
+        if (roomType === 'assistant') {
+          webrtcService.current?.endCall();
+        } else if (roomType === 'user') {
+          ionService.current?.leaveRoom();
+          // Don't close the service, just leave the room
+          // This allows other components to use the same service
+        }
+        setIsCallActive(false);
+      } catch (error) {
+        console.error('Failed to end call:', error);
+        Alert.alert('Error', 'Failed to end call');
       }
     }
   };
@@ -255,7 +283,7 @@ export const ChatScreen = () => {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.callButton, isCallActive && styles.callButtonActive]}
-          onPress={handleCallToggle}
+          onPress={handleToggleCall}
         >
           <Icon 
             name={isCallActive ? "call-end" : "call"} 
