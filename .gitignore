@@ -34,6 +34,7 @@ messaging/services/emqx_data/mnesia/
 logs/
 *.log
 app.log
+messaging/services/emqx_data/messages/*/LOG
 
 # Node.js
 node_modules/
@@ -45,4 +46,7 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
-.DS_Store 
+.DS_Store
+
+# Submodules
+ion-sfu/ 
